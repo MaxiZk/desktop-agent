@@ -1,0 +1,114 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Cross-Platform Compatibility Failures
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bugs exist on Linux/macOS
+  - **Scoped PBT Approach**: Scope the property to concrete failing cases: Linux platform with icon loading, process spawning, and Ollama error handling
+  - Test that on Linux platform:
+    - Icon loading with .ico format fails (tray icon broken/missing)
+    - Process spawning with cmd.exe throws "spawn cmd.exe ENOENT"
+    - Ollama spawn without installation throws unhandled errors
+  - Test implementation details from Bug Condition in design:
+    - `isBugCondition({ platform: 'linux', operation: 'loadIcon' })` returns true
+    - `isBugCondition({ platform: 'linux', operation: 'spawnProcess' })` returns true
+    - `isBugCondition({ operation: 'startOllama', ollamaNotInstalled: true })` returns true
+  - The test assertions should match the Expected Behavior Properties from design:
+    - Platform-appropriate icon loading (nativeImage for Linux, .ico for Windows)
+    - Platform-appropriate process spawning (npm directly on Linux, cmd.exe on Windows)
+    - Graceful Ollama error handling (try-catch with proper logging)
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bugs exist)
+  - Document counterexamples found to understand root cause:
+    - Exact error messages for icon loading failure
+    - Exact error messages for cmd.exe spawn failure
+    - Exact error messages for Ollama spawn failure
+  - Mark task complete when test is written, run, and failures are documented
+  - _Requirements: 1.1, 1.2, 1.3_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Windows Functionality Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for Windows platform (non-buggy inputs):
+    - Icon loading uses icon.ico successfully
+    - Process spawning uses cmd.exe with /c flag successfully
+    - Tray menu interactions work correctly
+    - Global shortcuts (Ctrl+Space) work correctly
+    - Window lifecycle (minimize, close, show, hide) works correctly
+    - Ollama detection (when already running) works correctly
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - For all operations on Windows, icon loading uses .ico format
+    - For all process spawns on Windows, cmd.exe is used with /c flag
+    - For all tray interactions on Windows, menu items and clicks work identically
+    - For all shortcut invocations on Windows, show/hide behavior is identical
+    - For all window lifecycle events on Windows, behavior is identical
+  - Property-based testing generates many test cases for stronger guarantees
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 3. Fix for Electron Linux compatibility issues
+
+  - [x] 3.1 Implement platform detection and icon loading fix
+    - Add `isWindows()` helper function: `function isWindows() { return process.platform === 'win32'; }`
+    - Update `createTray()` function to use platform-conditional icon loading:
+      - On Windows: continue using `iconPath` (icon.ico)
+      - On Linux/macOS: use `nativeImage.createEmpty()`
+    - Update `createWindow()` function to use same platform-conditional icon logic
+    - _Bug_Condition: isBugCondition({ platform: 'linux', operation: 'loadIcon' }) from design_
+    - _Expected_Behavior: Platform-appropriate icon loading (nativeImage for Linux, .ico for Windows) from design_
+    - _Preservation: Windows icon loading continues using .ico (Requirements 3.1) from design_
+    - _Requirements: 1.1, 2.1, 3.1_
+
+  - [x] 3.2 Implement process spawning fix
+    - Update `startProcesses()` function to use platform-conditional spawning:
+      - On Windows: continue using `spawn("cmd.exe", ["/c", "npm", "run", "server"])`
+      - On Linux/macOS: use `spawn("npm", ["run", "server"])` directly
+    - Apply same fix to both backendProcess and frontendProcess
+    - Remove `windowsHide` option on non-Windows platforms
+    - _Bug_Condition: isBugCondition({ platform: 'linux', operation: 'spawnProcess' }) from design_
+    - _Expected_Behavior: Platform-appropriate process spawning (npm directly on Linux, cmd.exe on Windows) from design_
+    - _Preservation: Windows process spawning continues using cmd.exe (Requirements 3.2) from design_
+    - _Requirements: 1.2, 2.2, 3.2_
+
+  - [x] 3.3 Implement Ollama error handling fix
+    - Wrap `spawn('ollama', ['serve'])` call in try-catch block in `startOllama()` function
+    - Catch synchronous errors (command not found) before they propagate
+    - Set `ollamaProcess = null` in catch block
+    - Keep existing error event handler for async errors
+    - Update `windowsHide` option to use `isWindows()` helper
+    - _Bug_Condition: isBugCondition({ operation: 'startOllama', ollamaNotInstalled: true }) from design_
+    - _Expected_Behavior: Graceful Ollama error handling with try-catch and proper logging from design_
+    - _Preservation: Ollama detection logic remains unchanged (Requirements 3.3) from design_
+    - _Requirements: 1.3, 2.3, 3.3_
+
+  - [x] 3.4 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Cross-Platform Compatibility Works
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bugs are fixed)
+    - Verify on Linux platform:
+      - Icon loading works with nativeImage
+      - Process spawning works with npm directly
+      - Ollama errors are handled gracefully
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.5 Verify preservation tests still pass
+    - **Property 2: Preservation** - Windows Functionality Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all Windows operations still work identically:
+      - Icon loading still uses .ico
+      - Process spawning still uses cmd.exe
+      - Tray interactions unchanged
+      - Global shortcuts unchanged
+      - Window lifecycle unchanged
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

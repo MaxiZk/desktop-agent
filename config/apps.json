@@ -1,0 +1,119 @@
+{
+  "apps": {
+    "chrome": {
+      "type": "command",
+      "value": "start \"\" chrome",
+      "aliases": ["google chrome", "browser", "navegador"]
+    },
+    "firefox": {
+      "type": "command",
+      "value": "start \"\" firefox",
+      "aliases": ["mozilla firefox", "mozilla"]
+    },
+    "edge": {
+      "type": "command",
+      "value": "start \"\" msedge",
+      "aliases": ["microsoft edge", "msedge"]
+    },
+    "vscode": {
+      "type": "command",
+      "value": "start \"\" code",
+      "aliases": ["vs code", "visual studio code", "code"]
+    },
+    "word": {
+      "type": "command",
+      "value": "start \"\" winword",
+      "aliases": ["microsoft word", "winword", "ms word"]
+    },
+    "excel": {
+      "type": "command",
+      "value": "start \"\" excel",
+      "aliases": ["microsoft excel", "ms excel"]
+    },
+    "powerpoint": {
+      "type": "command",
+      "value": "start \"\" powerpnt",
+      "aliases": ["microsoft powerpoint", "ms powerpoint", "ppt"]
+    },
+    "outlook": {
+      "type": "command",
+      "value": "start \"\" outlook",
+      "aliases": ["microsoft outlook", "ms outlook", "mail"]
+    },
+    "steam": {
+      "type": "url",
+      "value": "steam://open/main",
+      "aliases": ["steam client", "valve"]
+    },
+    "discord": {
+      "type": "url",
+      "value": "discord://",
+      "aliases": ["discord app"]
+    },
+    "whatsapp": {
+      "type": "command",
+      "value": "start \"\" whatsapp:",
+      "aliases": ["whatsapp desktop", "wa"]
+    },
+    "copilot": {
+      "type": "url",
+      "value": "https://copilot.microsoft.com",
+      "aliases": ["microsoft copilot", "ms copilot", "bing chat"]
+    },
+    "slack": {
+      "type": "command",
+      "value": "start \"\" slack",
+      "aliases": ["slack app"]
+    },
+    "teams": {
+      "type": "command",
+      "value": "start \"\" msteams",
+      "aliases": ["microsoft teams", "ms teams"]
+    },
+    "zoom": {
+      "type": "command",
+      "value": "start \"\" zoom",
+      "aliases": ["zoom app", "zoom meeting"]
+    },
+    "notepad": {
+      "type": "command",
+      "value": "start \"\" notepad.exe",
+      "aliases": ["bloc de notas", "text editor"]
+    },
+    "calculator": {
+      "type": "command",
+      "value": "explorer.exe shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+      "aliases": ["calc", "calculadora"]
+    },
+    "paint": {
+      "type": "command",
+      "value": "start \"\" mspaint",
+      "aliases": ["ms paint", "mspaint"]
+    },
+    "explorer": {
+      "type": "command",
+      "value": "start \"\" explorer",
+      "aliases": ["file explorer", "windows explorer"]
+    },
+    "cmd": {
+      "type": "command",
+      "value": "start \"\" cmd",
+      "aliases": ["command prompt", "terminal"]
+    },
+    "powershell": {
+      "type": "command",
+      "value": "start \"\" powershell",
+      "aliases": ["ps", "pwsh"]
+    },
+    "spotify": {
+      "type": "command",
+      "value": "start \"\" spotify",
+      "aliases": ["spotify app", "music"]
+    },
+    "vlc": {
+      "type": "command",
+      "value": "start \"\" vlc",
+      "aliases": ["vlc player", "video player"]
+    }
+  }
+}

@@ -75,14 +75,16 @@
       "value": "steam://open/main",
       "steamAppId": null,
       "aliases": ["steam client", "steam store"],
-      "category": "platform"
+      "category": "platform",
+      "isLauncher": true
     },
     "epic": {
-      "launcher": "command",
+      "launcher": "url",
       "value": "com.epicgames.launcher://",
       "steamAppId": null,
       "aliases": ["epic games", "epic games launcher", "epic launcher"],
-      "category": "platform"
+      "category": "platform",
+      "isLauncher": true
     }
   }
 }

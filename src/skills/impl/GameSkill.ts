@@ -23,6 +23,7 @@ interface GameEntry {
   steamAppId: string | null;
   aliases: string[];
   category: string;
+  isLauncher?: boolean;
 }
 
 interface GamesConfig {
@@ -221,7 +222,7 @@ export class GameSkill implements Skill {
 
   private listGames(): SkillResult {
     const games = Object.entries(this.config.games)
-      .filter(([key]) => key !== 'steam' && key !== 'epic') // Exclude launchers
+      .filter(([_key, entry]) => !entry.isLauncher)
       .map(([key, entry]) => ({
         name: key.replace(/_/g, ' '),
         category: entry.category,

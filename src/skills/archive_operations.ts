@@ -65,6 +65,7 @@ const isWindows = process.platform === 'win32';
 
 /**
  * Lists the contents of a compressed archive.
+ * Note: for large archives, only the first 100 entries are shown.
  */
 export async function listArchive(archivePath: string): Promise<ArchiveResult> {
   const absolutePath = resolve(archivePath);

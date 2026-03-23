@@ -1222,7 +1222,7 @@ app.post('/api/command', async (req: Request, res: Response) => {
       } else {
         message = `📋 Últimos ${entries.length} comandos:\n\n`;
         entries.forEach((entry, i) => {
-          const time = new Date(entry.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+          const time = new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
           message += `${i + 1}. [${time}] ${entry.command} → ${entry.intent}\n`;
         });
       }

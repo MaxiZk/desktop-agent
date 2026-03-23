@@ -267,9 +267,9 @@ const RULES: IntentRule[] = [
   {
     intent: 'launch_game',
     patterns: [
-      /^(?:jug[aá]r?|jugá|play)\s+(.+)$/i,
-      /^(?:lanz[aá]r?|lanzá|launch)\s+el\s+juego\s+(.+)$/i,
-      /^(?:inici[aá]r?|iniciá)\s+el\s+juego\s+(.+)$/i,
+      /^(?:jug[aá]r?|play)\s+(.+)$/i,
+      /^(?:lanz[aá]r?|launch)\s+el\s+juego\s+(.+)$/i,
+      /^(?:inici[aá]r?)\s+el\s+juego\s+(.+)$/i,
     ],
     extractParams: (_text, match) => ({ gameName: match[1].trim() }),
   },

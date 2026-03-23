@@ -195,7 +195,7 @@ describe('FreeFormHandler', () => {
       await handleFreeForm('test message', registry);
 
       expect(generateAIResponse).toHaveBeenCalledWith(
-        expect.stringContaining('Jarvis'),
+        expect.stringContaining('asistente virtual'),
         'llama3.2:1b',
         false
       );

@@ -29,6 +29,48 @@ interface IntentRule {
 }
 
 const RULES: IntentRule[] = [
+  // --- Append row to Excel (HIGHEST PRIORITY) ---
+  {
+    intent: 'excel_append_row',
+    patterns: [
+      /(?:agregá?|add|insertá?)\s+(?:una?\s+)?(?:fila|row|datos?)\s+(?:en|a)\s+(.+?\.(xlsx?|csv))\s+con[:]?\s*(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1]?.trim(),
+      content: match[3]?.trim(),
+    }),
+  },
+  {
+    intent: 'excel_create_summary_sheet',
+    patterns: [
+      /(?:creá?|generá?)\s+(?:una?\s+)?hoja\s+(?:de\s+)?resumen\s+(?:en|de)\s+(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1]?.trim(),
+    }),
+  },
+
+  // --- File creation (HIGHEST PRIORITY) ---
+  {
+    intent: 'file_create',
+    patterns: [
+      /(?:creá?|crear?|create|generá?|make|hacé?)\s+(?:un?\s+)?(?:archivo\s+)?(?:excel|xlsx?|word|docx?|txt|texto)\s+(?:llamad[oa]\s+)?(.+?\.(xlsx?|csv|docx?|txt))\s+en\s+(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: `${match[3].trim()}/${match[1].trim()}`
+    }),
+  },
+  {
+    intent: 'file_create',
+    patterns: [
+      /(?:creá?|crear?|create|generá?|make|hacé?)\s+(?:un?\s+)?(?:archivo\s+de\s+)?(?:excel|xlsx?|word|docx?|txt|texto)\s+(?:llamad[oa]\s+)?(.+)/i,
+    ],
+    extractParams: (text, match) => ({
+      filePath: match[1]?.trim(),
+      rawText: text
+    }),
+  },
+
   // --- File paths (HIGHEST PRIORITY - must be first) ---
   {
     intent: 'open_file',
@@ -41,6 +83,13 @@ const RULES: IntentRule[] = [
   },
 
   // --- Excel / CSV (más específicos primero) ---
+  {
+    intent: 'excel_create',
+    patterns: [
+      /(?:creá?|crear?|create|generá?|generar?|hacer?|hacé?|make)\s+(?:un?\s+)?(?:archivo\s+)?(?:excel|xlsx?)\s+(?:en\s+|en\s+la\s+carpeta\s+)?(.+)/i,
+    ],
+    extractParams: (_text, match) => ({ filePath: match[1]?.trim() }),
+  },
   {
     intent: 'excel_read',
     patterns: [
@@ -168,6 +217,35 @@ const RULES: IntentRule[] = [
     }),
   },
 
+  // --- Conversational editing - direct file paths (before specific file operations) ---
+  {
+    intent: 'excel_edit',
+    patterns: [
+      /(?:trabajá?|editá?|modific[aá]?|abrí?\s+y\s+editar?)\s+(.+\.(xlsx?|csv))/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1]?.trim(),
+    }),
+  },
+  {
+    intent: 'txt_edit',
+    patterns: [
+      /(?:trabajá?|editá?|modific[aá]?)\s+(.+\.txt)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1]?.trim(),
+    }),
+  },
+  {
+    intent: 'word_edit',
+    patterns: [
+      /(?:trabajá?|editá?|modific[aá]?)\s+(.+\.docx?)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1]?.trim(),
+    }),
+  },
+
   // --- Archivos (específicos) - MUST come before open_app ---
   {
     intent: 'search_files',
@@ -207,6 +285,14 @@ const RULES: IntentRule[] = [
   },
 
   // --- Apps (más generales, al final) ---
+  {
+    intent: 'open_url',
+    patterns: [
+      /(?:abrí?|abrir?|open)\s+(?:una?\s+)?(?:pesta[nñ]a\s+(?:nueva\s+)?(?:de|en|con)\s+)?(?:chrome\s+)?(?:con\s+)?(?:la\s+p[aá]gina\s+)?(.+\.(?:com|org|net|ar|io|ai|dev|co|app)|https?:\/\/.+)/i,
+      /(?:abrí?|abrir?|open)\s+(?:la\s+p[aá]gina\s+|el\s+sitio\s+)?(.+\.(?:com|org|net|ar|io|ai|dev|co|app))/i,
+    ],
+    extractParams: (_text, match) => ({ url: match[1]?.trim() }),
+  },
   {
     intent: 'list_running_apps',
     patterns: [
@@ -260,6 +346,13 @@ const RULES: IntentRule[] = [
   },
 
   // --- Historial / Ayuda ---
+  {
+    intent: 'clear_history',
+    patterns: [
+      /(?:limpi[aá]?|limpiar?|borr[aá]?|borrar?|clear|delete)\s+(?:el\s+)?(?:historial|memoria|chat|conversaci[oó]n)/i,
+    ],
+    extractParams: () => ({}),
+  },
   {
     intent: 'show_history',
     patterns: [

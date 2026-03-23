@@ -14,6 +14,7 @@ import { readFileByPath } from '../read_file_by_path.js';
 import { openFile }       from '../open_file.js';
 import { openFolder }     from '../open_folder.js';
 import { analyzeCSV }     from '../analyze_csv.js';
+import { openFile as osOpenFile } from '../utils/OsAdapter.js';
 
 import type { Skill, SkillResult, SkillContext } from '../Skill.js';
 
@@ -27,6 +28,7 @@ export class FileSkill implements Skill {
     'open_file',
     'open_folder',
     'analyze_csv',
+    'file_create',
   ];
 
   validate(_context: SkillContext): string | null {
@@ -117,8 +119,102 @@ export class FileSkill implements Skill {
         };
       }
 
+      case 'file_create': {
+        const filePath = String(params.filePath ?? '').trim();
+        if (!filePath) {
+          return { 
+            success: false, 
+            message: 'Indicame la ruta y nombre del archivo a crear. Ejemplo: ventas.xlsx en /home/maximo/Documents' 
+          };
+        }
+        
+        const rawText = String(params.rawText ?? '');
+        return this.createFile(filePath, rawText);
+      }
+
       default:
         return { success: false, message: `Intent desconocido: ${intent}` };
+    }
+  }
+
+  private async createFile(filePath: string, originalText?: string): Promise<SkillResult> {
+    const { resolve, dirname, extname } = await import('path');
+    const { mkdir, writeFile } = await import('fs/promises');
+    
+    // Determine extension from path or from original text
+    let absPath = resolve(filePath);
+    const ext = extname(absPath).toLowerCase();
+    
+    // If no extension, guess from original text
+    if (!ext) {
+      const text = (originalText ?? '').toLowerCase();
+      if (text.includes('word') || text.includes('docx')) {
+        absPath += '.docx';
+      } else if (text.includes('txt') || text.includes('texto')) {
+        absPath += '.txt';
+      } else {
+        absPath += '.xlsx'; // default to excel
+      }
+    }
+    
+    const finalExt = extname(absPath).toLowerCase();
+    await mkdir(dirname(absPath), { recursive: true });
+    
+    try {
+      if (finalExt === '.xlsx' || finalExt === '.xls') {
+        // Create Excel file
+        const ExcelJS = (await import('exceljs')).default;
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet('Hoja1');
+        ws.addRow(['Columna A', 'Columna B', 'Columna C']);
+        ws.getRow(1).font = { bold: true };
+        ws.columns.forEach(col => { col.width = 18; });
+        await wb.xlsx.writeFile(absPath);
+        
+        // After successful file creation, open it
+        try {
+          await osOpenFile(absPath);
+        } catch {
+          // Don't fail if opening fails
+        }
+      } else if (finalExt === '.docx') {
+        // Create Word file
+        const { Document, Packer, Paragraph } = await import('docx');
+        const doc = new Document({
+          sections: [{ children: [new Paragraph('')] }]
+        });
+        const buffer = await Packer.toBuffer(doc);
+        await writeFile(absPath, buffer);
+        
+        // After successful file creation, open it
+        try {
+          await osOpenFile(absPath);
+        } catch {
+          // Don't fail if opening fails
+        }
+      } else if (finalExt === '.txt' || finalExt === '.csv') {
+        // Create empty text/csv file
+        await writeFile(absPath, '', 'utf-8');
+        
+        // After successful file creation, open it
+        try {
+          await osOpenFile(absPath);
+        } catch {
+          // Don't fail if opening fails
+        }
+      }
+      
+      return {
+        success: true,
+        message: `Archivo creado y abierto: ${absPath}`,
+        data: { path: absPath }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `No pude crear el archivo: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        error: String(error)
+      };
     }
   }
 }

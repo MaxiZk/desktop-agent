@@ -128,7 +128,7 @@ function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [pendingConfirmation, setPendingConfirmation] = useState<string | null>(null)
-  const [ollamaStatus, setOllamaStatus] = useState<'connected' | 'disconnected'>('disconnected')
+  const [aiStatus, setAiStatus] = useState<'claude' | 'ollama' | 'none' | 'checking'>('checking')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Scroll to bottom when messages change
@@ -136,22 +136,78 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Send greeting on mount
+  // Send greeting on mount and load session history
   useEffect(() => {
-    const greeting: Message = {
-      id: generateId(),
-      role: 'bot',
-      content: `¡Hola ${USER_NAME}! Soy tu asistente. ¿En qué te puedo ayudar hoy?`,
-      timestamp: new Date(),
+    // Load session history first
+    fetch('http://localhost:3001/api/session/history')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.messages?.length > 0) {
+          // Convert session messages to UI messages
+          const loadedMessages: Message[] = data.messages.map((m: any) => ({
+            id: generateId(),
+            role: m.role === 'user' ? 'user' : 'bot',
+            content: m.content,
+            timestamp: new Date(m.timestamp),
+          }))
+          setMessages(loadedMessages)
+          console.log(`[Session] Loaded ${loadedMessages.length} messages from history`)
+        } else {
+          // No history - show greeting
+          const greeting: Message = {
+            id: generateId(),
+            role: 'bot',
+            content: `¡Hola ${USER_NAME}! Soy tu asistente. ¿En qué te puedo ayudar hoy?`,
+            timestamp: new Date(),
+          }
+          setMessages([greeting])
+        }
+      })
+      .catch(() => {
+        // Failed to load - show greeting
+        const greeting: Message = {
+          id: generateId(),
+          role: 'bot',
+          content: `¡Hola ${USER_NAME}! Soy tu asistente. ¿En qué te puedo ayudar hoy?`,
+          timestamp: new Date(),
+        }
+        setMessages([greeting])
+      })
+
+    // Check AI status
+    const checkAI = () => {
+      fetch('http://localhost:3001/api/ai-status')
+        .then(r => r.json())
+        .then(data => {
+          console.log('[AI Status]', data)
+          if (data.claude) {
+            setAiStatus('claude')
+          } else if (data.ollama) {
+            setAiStatus('ollama')
+          } else {
+            setAiStatus('none')
+          }
+        })
+        .catch(() => setAiStatus('none'))
     }
-    setMessages([greeting])
+    
+    // Check immediately and retry after 3 seconds
+    checkAI()
+    const timer = setTimeout(checkAI, 3000)
 
     // Listen for Ollama status from Electron
     if ((window as any).electron?.ipcRenderer) {
       (window as any).electron.ipcRenderer.on('ollama-status', (status: string) => {
-        setOllamaStatus(status as 'connected' | 'disconnected')
+        // Update AI status based on Ollama
+        if (status === 'connected' && aiStatus !== 'claude') {
+          setAiStatus('ollama')
+        } else if (status === 'disconnected' && aiStatus === 'ollama') {
+          setAiStatus('none')
+        }
       })
     }
+    
+    return () => clearTimeout(timer)
   }, [])
 
   const addMessage = (role: 'user' | 'bot', content: string, meta?: Message['meta']) => {
@@ -165,6 +221,22 @@ function App() {
     setMessages(prev => [...prev, message])
   }
 
+  const saveToSessionHistory = async (role: 'user' | 'assistant', content: string) => {
+    try {
+      await fetch('http://localhost:3001/api/session/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role,
+          content,
+          timestamp: new Date().toISOString(),
+        }),
+      })
+    } catch (error) {
+      console.error('[Session] Failed to save message:', error)
+    }
+  }
+
   const handleSend = async () => {
     if (!input.trim() || loading) return
 
@@ -173,6 +245,9 @@ function App() {
 
     // Add user message
     addMessage('user', userMessage)
+
+    // Save user message to session history
+    await saveToSessionHistory('user', userMessage)
 
     // Check if this is a confirmation
     const isConfirmation = (userMessage.toLowerCase() === 'confirmar' || userMessage.toLowerCase() === 'confirm') && pendingConfirmation
@@ -194,10 +269,26 @@ function App() {
       // Debug: log the full response
       console.log('[App] Command response:', result);
 
+      // Handle clear_history intent
+      if (result.meta?.intent === 'clear_history' && result.success) {
+        // Clear local messages and show greeting
+        const greeting: Message = {
+          id: generateId(),
+          role: 'bot',
+          content: `¡Hola ${USER_NAME}! Soy tu asistente. ¿En qué te puedo ayudar hoy?`,
+          timestamp: new Date(),
+        }
+        setMessages([greeting])
+        setLoading(false)
+        return
+      }
+
       // Handle confirmation requirement
       if (result.requiresConfirmation) {
         setPendingConfirmation(result.confirmationToken || null)
-        addMessage('bot', `⚠️ ${result.message}\n\nEscribí 'confirmar' para continuar.`)
+        const confirmMsg = `⚠️ ${result.message}\n\nEscribí 'confirmar' para continuar.`
+        addMessage('bot', confirmMsg)
+        await saveToSessionHistory('assistant', confirmMsg)
         return
       }
 
@@ -216,13 +307,18 @@ function App() {
       // Add bot response
       if (result.success) {
         addMessage('bot', botMessage, result.meta)
+        await saveToSessionHistory('assistant', botMessage)
       } else {
-        addMessage('bot', `❌ ${botMessage || result.error}`)
+        const errorMsg = `❌ ${botMessage || result.error}`
+        addMessage('bot', errorMsg)
+        await saveToSessionHistory('assistant', errorMsg)
       }
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Error desconocido'
-      addMessage('bot', `❌ Error: ${errorMsg}`)
+      const fullErrorMsg = `❌ Error: ${errorMsg}`
+      addMessage('bot', fullErrorMsg)
+      await saveToSessionHistory('assistant', fullErrorMsg)
     } finally {
       setLoading(false)
     }
@@ -244,9 +340,16 @@ function App() {
           <span className="header-title">Desktop Agent</span>
         </div>
         <div className="header-right">
-          <span className={`status-pill ${ollamaStatus === 'connected' ? 'connected' : 'disconnected'}`}>
+          <span className={`status-pill ${
+            aiStatus === 'claude' ? 'connected' : 
+            aiStatus === 'ollama' ? 'ollama' : 
+            'disconnected'
+          }`}>
             <span className="status-dot">●</span>
-            {ollamaStatus === 'connected' ? 'Con IA' : 'Sin IA'}
+            {aiStatus === 'claude' ? 'Con IA' : 
+             aiStatus === 'ollama' ? 'Ollama' : 
+             aiStatus === 'checking' ? 'Verificando...' :
+             'Sin IA'}
           </span>
         </div>
       </header>

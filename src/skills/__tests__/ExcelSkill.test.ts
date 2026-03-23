@@ -443,7 +443,7 @@ maria@test.com,Maria Garcia,31`;
     it('should have correct metadata', () => {
       expect(skill.name).toBe('excel');
       expect(skill.description).toContain('Excel');
-      expect(skill.riskLevel).toBe('medium');
+      expect(skill.riskLevel).toBe('low');
       expect(skill.supportedIntents).toContain('excel_read');
       expect(skill.supportedIntents).toContain('excel_csv_to_xlsx');
       expect(skill.supportedIntents).toContain('excel_summary_by_month');

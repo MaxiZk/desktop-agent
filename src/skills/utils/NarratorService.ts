@@ -1,10 +1,11 @@
 /**
  * NarratorService.ts — Natural language narration for skill results
  * 
- * Uses Ollama to generate conversational responses in Spanish
+ * Uses Claude (primary) and Ollama (fallback) to generate conversational responses in Spanish
  * after skill execution, making the assistant feel more human.
  */
 
+import { askClaude } from '../../ai/claude_ai.js';
 import { generateAIResponse } from '../../ai/ollama_ai.js';
 import type { SkillResult } from '../Skill.js';
 
@@ -54,7 +55,7 @@ function translateFallback(message: string): string {
  * Generate a natural language narration for a skill execution result
  * 
  * @param result - The skill execution result
- * @returns Promise<string> - Narrated message (or original message if Ollama fails)
+ * @returns Promise<string> - Narrated message (or original message if AI fails)
  */
 export async function narrateResult(
   result: SkillResult
@@ -62,12 +63,29 @@ export async function narrateResult(
   const startTime = Date.now();
 
   try {
-    // Build prompt for Ollama
-    const prompt = buildNarrationPrompt(result);
+    // Build prompt for AI
+    const prompt = `En una oración natural en español, describí esta acción:
+"${result.message}"
+
+Terminá con una pregunta corta de seguimiento.`;
+
+    // Try Claude first
+    const claudeResult = await askClaude(prompt, []);
+    
+    if (claudeResult.success && claudeResult.response) {
+      const elapsed = Date.now() - startTime;
+      console.log(`[Narrator] Claude narrated in ${elapsed}ms`);
+      return claudeResult.response;
+    }
+    
+    console.log('[Narrator] Claude unavailable:', claudeResult.error);
+
+    // Fallback to Ollama
+    const ollamaPrompt = buildNarrationPrompt(result);
 
     // Call Ollama with 8 second timeout
     const ollamaResult = await Promise.race([
-      generateAIResponse(prompt, 'llama3.2:1b', false),
+      generateAIResponse(ollamaPrompt, 'llama3.2:1b', false),
       timeoutPromise(8000)
     ]);
 
@@ -88,7 +106,7 @@ export async function narrateResult(
       }
       
       const elapsed = Date.now() - startTime;
-      console.log(`[Narrator] Narrated in ${elapsed}ms`);
+      console.log(`[Narrator] Ollama narrated in ${elapsed}ms`);
       return `${result.message}. ¿${trimmed}`;
     }
 

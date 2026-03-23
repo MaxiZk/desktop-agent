@@ -1,13 +1,15 @@
 /**
- * FreeFormHandler.ts — Free-form chat using Ollama as the brain
+ * FreeFormHandler.ts — Free-form chat using Claude (primary) and Ollama (fallback)
  * 
- * When CommandRouter returns "unknown", this handler uses Ollama to:
+ * When CommandRouter returns "unknown", this handler uses Claude to:
  * 1. Determine if the user wants to execute a skill or just chat
  * 2. Extract intent and params if it's a skill command
  * 3. Respond naturally if it's just conversation
  */
 
+import { askClaude } from '../../ai/claude_ai.js';
 import { generateAIResponse } from '../../ai/ollama_ai.js';
+import { ContextBuilder } from '../../core/context/ContextBuilder.js';
 import type { Skill, SkillResult } from '../Skill.js';
 import type { SkillRegistry } from '../SkillRegistry.js';
 
@@ -24,6 +26,11 @@ interface OllamaChatResponse {
 }
 
 type OllamaResponse = OllamaActionResponse | OllamaChatResponse;
+
+interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 /**
  * Placeholder texts that indicate Ollama returned template text instead of actual response
@@ -42,27 +49,135 @@ function isPlaceholder(text: string): boolean {
 }
 
 /**
- * Handle free-form user input using Ollama
+ * Handle free-form user input using Claude (primary) and Ollama (fallback)
  * 
  * @param userMessage - The user's message
  * @param registry - The skill registry to access available skills
- * @returns Promise<SkillResult> - Result with Ollama's response or skill execution
+ * @param contextBuilder - Optional ContextBuilder for enriched prompts
+ * @param conversationHistory - Optional conversation history for context
+ * @returns Promise<SkillResult> - Result with AI's response or skill execution
  */
 export async function handleFreeForm(
   userMessage: string,
-  registry: SkillRegistry
+  registry: SkillRegistry,
+  contextBuilder?: ContextBuilder,
+  conversationHistory?: ConversationMessage[]
 ): Promise<SkillResult> {
   const startTime = Date.now();
 
   try {
+    // Build context if ContextBuilder is provided
+    let contextInfo = '';
+    if (contextBuilder) {
+      try {
+        const context = await contextBuilder.buildContext('free_form', 'FreeFormHandler');
+        
+        // Format context for AI prompt (compact format)
+        const recentCommands = context.commandHistory.slice(-3).map(cmd => 
+          `- ${cmd.command} (${cmd.result})`
+        ).join('\n');
+        
+        if (recentCommands) {
+          contextInfo = `\nContexto reciente:\n${recentCommands}\n`;
+        }
+      } catch (error) {
+        console.warn('[FreeForm] Failed to build context:', error);
+        // Continue without context
+      }
+    }
+
+    // Format conversation history
+    let historyText = '';
+    if (conversationHistory && conversationHistory.length > 0) {
+      historyText = '\nHistorial de conversación:\n' + 
+        conversationHistory.map(h => 
+          `${h.role === 'user' ? 'Usuario' : 'Asistente'}: ${h.content}`
+        ).join('\n') + '\n';
+    }
+
     // Build list of available skills
     const availableSkills = registry.getAll()
       .map((s: Skill) => `${s.name}: ${s.supportedIntents.join(', ')}`)
       .join('\n');
 
-    // Build prompt for Ollama
-    const prompt = `Sos un asistente de escritorio inteligente llamado Jarvis.
+    // Build prompt for AI
+    const prompt = `Analizá este mensaje y respondé SOLO con JSON válido:
+${contextInfo}${historyText}
+Mensaje actual del usuario: "${userMessage}"
 
+Skills disponibles (para acciones en la PC):
+${availableSkills}
+
+Si el usuario quiere ejecutar una acción de las skills disponibles, respondé:
+{
+  "type": "action",
+  "intent": "nombre_intent",
+  "params": { "clave": "valor" },
+  "response": "respuesta natural en español"
+}
+
+Si es conversación, pregunta o cualquier otra cosa, respondé:
+{
+  "type": "chat",
+  "response": "tu respuesta en español, 2-3 oraciones"
+}
+
+IMPORTANTE: Respondé ÚNICAMENTE con el JSON. Sin texto adicional.`;
+
+    // Try Claude first
+    const claudeResult = await askClaude(prompt, []);
+    
+    if (claudeResult.success && claudeResult.response) {
+      try {
+        // Clean up response (remove markdown code blocks if present)
+        const clean = claudeResult.response
+          .replace(/```json\n?/g, '')
+          .replace(/```\n?/g, '')
+          .trim();
+        
+        const parsed = JSON.parse(clean);
+        
+        // Handle action type
+        if (parsed.type === 'action' && parsed.intent && parsed.intent !== 'unknown') {
+          const skill = registry.resolve(parsed.intent);
+          if (skill) {
+            const result = await skill.execute({
+              rawCommand: userMessage,
+              intent: parsed.intent,
+              params: parsed.params ?? {},
+              confirmed: false,
+            });
+            
+            const elapsed = Date.now() - startTime;
+            console.log(`[FreeForm] Claude action processed in ${elapsed}ms - Intent: ${parsed.intent}`);
+            
+            return {
+              ...result,
+              message: parsed.response ?? result.message,
+            };
+          }
+        }
+        
+        // Handle chat type
+        if (parsed.type === 'chat' && parsed.response) {
+          const elapsed = Date.now() - startTime;
+          console.log(`[FreeForm] Claude chat processed in ${elapsed}ms`);
+          
+          return {
+            success: true,
+            message: parsed.response,
+          };
+        }
+      } catch (parseError) {
+        console.log('[FreeForm] Claude JSON parse error, falling back to Ollama');
+      }
+    } else {
+      console.log('[FreeForm] Claude unavailable:', claudeResult.error);
+    }
+
+    // Fallback to Ollama
+    const ollamaPrompt = `Soy tu asistente virtual, un asistente de escritorio inteligente.
+${contextInfo}${historyText}
 Tenés acceso a estas skills:
 ${availableSkills}
 
@@ -88,7 +203,7 @@ Respondé ÚNICAMENTE con el JSON, sin texto adicional.`;
 
     // Call Ollama with 15 second timeout
     const ollamaResult = await Promise.race([
-      generateAIResponse(prompt, 'llama3.2:1b', false),
+      generateAIResponse(ollamaPrompt, 'llama3.2:1b', false),
       timeoutPromise(15000),
     ]);
 
@@ -122,7 +237,7 @@ Respondé ÚNICAMENTE con el JSON, sin texto adicional.`;
     }
 
     const elapsed = Date.now() - startTime;
-    console.log(`[FreeForm] Processed in ${elapsed}ms - Type: ${parsed.type}`);
+    console.log(`[FreeForm] Ollama processed in ${elapsed}ms - Type: ${parsed.type}`);
 
     // Handle action type
     if (parsed.type === 'action') {

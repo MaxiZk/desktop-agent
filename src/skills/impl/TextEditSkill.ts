@@ -17,13 +17,15 @@ import type { Skill, SkillResult, SkillContext } from '../Skill.js';
 export class TextEditSkill implements Skill {
   readonly name = 'textedit';
   readonly description = 'Edita archivos de texto con instrucciones en lenguaje natural';
-  readonly riskLevel = 'medium' as const;
+  readonly riskLevel = 'low' as const;
   readonly supportedIntents = [
     'text_append',
     'text_prepend',
     'text_replace',
     'text_delete',
     'text_read',
+    'txt_edit',
+    'word_edit',
   ];
 
   validate(context: SkillContext): string | null {
@@ -77,6 +79,42 @@ export class TextEditSkill implements Skill {
       switch (intent) {
         case 'text_read':
           return await this.readText(absolutePath, filePath);
+
+        case 'txt_edit': {
+          if (!params.filePath) {
+            return { success: true, message: '¿Con qué archivo de texto querés trabajar?' };
+          }
+          
+          if (!existsSync(absolutePath)) {
+            return { success: false, message: `No encontré: ${absolutePath}` };
+          }
+          
+          const content = await readFile(absolutePath, 'utf-8');
+          const lines = content.split('\n').length;
+          const words = content.split(/\s+/).filter(Boolean).length;
+          
+          return {
+            success: true,
+            message: `Abrí ${filePath}. Tiene ${lines} líneas y ${words} palabras. ¿Qué querés hacer? Puedo agregar texto al final, al principio, reemplazar texto, o eliminar líneas.`,
+            data: { filePath: absolutePath, lines, words }
+          };
+        }
+
+        case 'word_edit': {
+          if (!params.filePath) {
+            return { success: true, message: '¿Con qué archivo Word querés trabajar?' };
+          }
+          
+          if (!existsSync(absolutePath)) {
+            return { success: false, message: `No encontré: ${absolutePath}` };
+          }
+          
+          return {
+            success: true,
+            message: `Abrí ${filePath}. Para editarlo puedo agregar contenido al final. ¿Qué querés escribir?`,
+            data: { filePath: absolutePath }
+          };
+        }
 
         case 'text_append':
           return await this.appendText(absolutePath, filePath, String(params.content ?? ''));

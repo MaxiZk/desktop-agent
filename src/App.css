@@ -77,6 +77,11 @@ body {
   color: #4ade80;
 }
 
+.status-pill.ollama {
+  background: #2e2a1a;
+  color: #fbbf24;
+}
+
 .status-pill.disconnected {
   background: #2e1a1a;
   color: #f87171;

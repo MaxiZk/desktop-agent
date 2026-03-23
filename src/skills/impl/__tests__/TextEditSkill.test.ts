@@ -31,7 +31,7 @@ describe('TextEditSkill', () => {
     it('should have correct skill metadata', () => {
       expect(skill.name).toBe('textedit');
       expect(skill.description).toContain('texto');
-      expect(skill.riskLevel).toBe('medium');
+      expect(skill.riskLevel).toBe('low');
       expect(skill.supportedIntents).toContain('text_append');
       expect(skill.supportedIntents).toContain('text_prepend');
       expect(skill.supportedIntents).toContain('text_replace');

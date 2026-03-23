@@ -15,9 +15,9 @@
 
 import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
-import { readFile } from 'fs/promises';
+import { readFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { resolve, extname } from 'path';
+import { resolve, extname, dirname } from 'path';
 
 import type { Skill, SkillResult, SkillContext } from '../Skill.js';
 
@@ -32,9 +32,12 @@ interface DataRow {
 export class ExcelSkill implements Skill {
   readonly name = 'excel';
   readonly description = 'Procesa archivos Excel y CSV: resúmenes, duplicados, conversiones';
-  readonly riskLevel = 'medium' as const;
+  readonly riskLevel = 'low' as const;
   readonly supportedIntents = [
     'excel_read',
+    'excel_create',
+    'excel_edit',
+    'excel_append_row',
     'excel_csv_to_xlsx',
     'excel_summary_by_month',
     'excel_find_duplicates',
@@ -54,6 +57,57 @@ export class ExcelSkill implements Skill {
     switch (intent) {
       case 'excel_read':
         return this.readFile(params.filePath as string);
+
+      case 'excel_create':
+        return this.createFile(params.filePath as string);
+
+      case 'excel_edit': {
+        const filePath = String(params.filePath ?? '');
+        if (!filePath) {
+          return { success: true, message: '¿Con qué archivo Excel querés trabajar?' };
+        }
+        
+        const absPath = resolve(filePath);
+        if (!existsSync(absPath)) {
+          return { success: false, message: `No encontré: ${absPath}` };
+        }
+        
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(absPath);
+        const ws = workbook.worksheets[0];
+        
+        const headers: string[] = [];
+        ws.getRow(1).eachCell(cell => headers.push(String(cell.value ?? '')));
+        
+        return {
+          success: true,
+          message: `Abrí ${filePath}. Tiene ${ws.rowCount - 1} filas y columnas: ${headers.join(', ')}. ¿Qué querés hacer? Puedo agregar filas, buscar duplicados, hacer resumen por mes, o crear hoja resumen.`,
+          data: { filePath: absPath, headers, rowCount: ws.rowCount - 1 }
+        };
+      }
+
+      case 'excel_append_row': {
+        const filePath = String(params.filePath ?? '');
+        const content = String(params.content ?? '');
+        const values = content.split(',').map((s: string) => s.trim());
+        
+        if (!filePath) {
+          return { success: false, message: 'Indicame el archivo Excel' };
+        }
+        
+        const absPath = resolve(filePath);
+        if (!existsSync(absPath)) {
+          return { success: false, message: `No encontré: ${absPath}` };
+        }
+        
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(absPath);
+        const ws = workbook.worksheets[0];
+        ws.addRow(values);
+        await workbook.xlsx.writeFile(absPath);
+        
+        return { success: true, message: `Fila agregada: ${values.join(', ')}` };
+      }
 
       case 'excel_csv_to_xlsx':
         return this.csvToXlsx(params.filePath as string);
@@ -80,6 +134,43 @@ export class ExcelSkill implements Skill {
   }
 
   // ── Leer archivo (xlsx o csv) ───────────────────────────────────────────────
+
+  private async createFile(filePath: string): Promise<SkillResult> {
+    const absPath = resolve(filePath.endsWith('.xlsx') ? filePath : filePath + '.xlsx');
+    
+    try {
+      await mkdir(dirname(absPath), { recursive: true });
+      
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet('Hoja1');
+      
+      // Add header row
+      ws.addRow(['Columna A', 'Columna B', 'Columna C']);
+      ws.getRow(1).font = { bold: true };
+      ws.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD9E1F2' },
+      };
+      
+      // Set column widths
+      ws.columns.forEach(col => { col.width = 18; });
+      
+      await workbook.xlsx.writeFile(absPath);
+      
+      return {
+        success: true,
+        message: `Archivo Excel creado: ${absPath}`,
+        data: { path: absPath }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `No pude crear el archivo Excel`,
+        error: error instanceof Error ? error.message : 'unknown'
+      };
+    }
+  }
 
   private async readFile(filePath: string): Promise<SkillResult> {
     const absPath = resolve(filePath);

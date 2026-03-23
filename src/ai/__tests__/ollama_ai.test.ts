@@ -21,7 +21,7 @@ describe('generateAIResponse', () => {
       expect(result.response).toBeDefined();
       expect(typeof result.response).toBe('string');
     }
-  }, 10000); // 10 second timeout for network request
+  }, 6000); // 6 second timeout (5s fetch timeout + 1s buffer)
 
   it('should use default model "llama3.2:1b" when no model is specified', async () => {
     // This test verifies the function signature and default parameter
@@ -30,7 +30,7 @@ describe('generateAIResponse', () => {
     // Should return a valid OllamaResponse structure
     expect(result).toHaveProperty('success');
     expect(typeof result.success).toBe('boolean');
-  }, 10000); // 10 second timeout for network request
+  }, 6000); // 6 second timeout (5s fetch timeout + 1s buffer)
 
   it('should accept custom model parameter', async () => {
     // This test verifies the function accepts a custom model parameter
@@ -52,7 +52,7 @@ describe('generateAIResponse', () => {
       expect(['CONNECTION_FAILED', 'API_ERROR', 'UNKNOWN']).toContain(result.errorType);
       expect(result.response).toBeUndefined();
     }
-  }, 10000); // 10 second timeout for network request
+  }, 6000); // 6 second timeout (5s fetch timeout + 1s buffer)
 
   it('should accept stream parameter and handle streaming mode', async () => {
     // This test verifies the function accepts the stream parameter

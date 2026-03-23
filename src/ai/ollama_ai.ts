@@ -168,14 +168,26 @@ export async function generateAIResponse(
       stream
     };
 
-    // Make HTTP POST request to Ollama API
-    const response = await fetch('http://localhost:11434/api/generate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    });
+    // Make HTTP POST request to Ollama API with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+    let response: Response;
+    try {
+      response = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      throw fetchError;
+    }
 
     // Handle HTTP error status codes
     if (!response.ok) {
@@ -213,7 +225,14 @@ export async function generateAIResponse(
   } catch (error) {
     // Handle network errors (connection refused, timeout, etc.)
     if (error instanceof Error) {
-      // Check for connection errors
+      // Check for connection errors and abort errors
+      if (error.name === 'AbortError') {
+        return {
+          success: false,
+          error: `Ollama service timeout: No response after 5 seconds`,
+          errorType: 'CONNECTION_FAILED'
+        };
+      }
       if (error.message.includes('fetch') || error.message.includes('ECONNREFUSED')) {
         return {
           success: false,

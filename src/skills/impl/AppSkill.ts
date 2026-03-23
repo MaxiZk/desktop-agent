@@ -35,6 +35,7 @@ export class AppSkill implements Skill {
   readonly riskLevel = 'low' as const;
   readonly supportedIntents = [
     'open_app',
+    'open_url',
     'close_app',
     'focus_app',
     'minimize_app',
@@ -43,12 +44,21 @@ export class AppSkill implements Skill {
 
   validate(context: SkillContext): string | null {
     const needsAppName = ['open_app', 'close_app', 'focus_app', 'minimize_app'];
+    const needsUrl = ['open_url'];
+    
     // list_running_apps no necesita parámetros
     if (needsAppName.includes(context.intent)) {
       if (!context.params.appName || typeof context.params.appName !== 'string') {
         return 'Se requiere el nombre de la aplicación';
       }
     }
+    
+    if (needsUrl.includes(context.intent)) {
+      if (!context.params.url || typeof context.params.url !== 'string') {
+        return 'Se requiere la URL';
+      }
+    }
+    
     return null;
   }
 
@@ -58,6 +68,27 @@ export class AppSkill implements Skill {
     switch (intent) {
       case 'open_app':
         return this.openApp(String(params.appName ?? ''));
+
+      case 'open_url': {
+        const url = String(params.url ?? '');
+        if (!url) return { success: false, message: 'Se requiere la URL' };
+        
+        const fullUrl = url.startsWith('http') ? url : `https://${url}`;
+        const command = isWindows()
+          ? `start "" "${fullUrl}"`
+          : `xdg-open "${fullUrl}"`;
+        
+        try {
+          await runCommand(command);
+          return { success: true, message: `Abrí ${url}` };
+        } catch (error) {
+          return {
+            success: false,
+            message: `No pude abrir ${url}`,
+            error: error instanceof Error ? error.message : 'unknown'
+          };
+        }
+      }
 
       case 'close_app': {
         const r = await closeAppByName(String(params.appName ?? ''));

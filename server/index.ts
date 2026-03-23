@@ -5,6 +5,16 @@
  * without importing Node-only modules directly in the browser.
  */
 
+import { config } from 'dotenv';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+config({ path: resolve(__dirname, '../.env') });
+
+console.log('[Claude] API key loaded:', !!process.env.ANTHROPIC_API_KEY ? 'YES' : 'NO - check .env file');
+
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { buildContext, parseCommand }    from '../src/skills/CommandRouter.js';
@@ -17,6 +27,9 @@ import { SystemSkill }     from '../src/skills/impl/SystemSkill.js';
 import { TextEditSkill }   from '../src/skills/impl/TextEditSkill.js';
 import { narrateResult }   from '../src/skills/utils/NarratorService.js';
 import { handleFreeForm }  from '../src/skills/utils/FreeFormHandler.js';
+import { ContextBuilder }  from '../src/core/context/ContextBuilder.js';
+import { SecurityGuard }   from '../src/core/security/SecurityGuard.js';
+import { Allowlist }       from '../src/core/security/Allowlist.js';
 
 import {
   openCalculator,
@@ -55,6 +68,11 @@ import {
   confirmSystemAction
 } from '../src/backend/index.js';
 import type { CommandHistoryEntry } from '../src/backend/index.js';
+import {
+  loadSessionHistory,
+  saveSessionMessage,
+  clearSessionHistory
+} from '../src/memory/session_memory.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -79,6 +97,14 @@ app.use((req: Request, res: Response, next) => {
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// AI status endpoint
+app.get('/api/ai-status', (req: Request, res: Response) => {
+  res.json({
+    claude: !!process.env.ANTHROPIC_API_KEY,
+    ollama: false // will be updated by frontend ping
+  });
 });
 
 // Windows App Launcher endpoints
@@ -829,6 +855,82 @@ app.get('/api/command-history', async (req: Request, res: Response) => {
   }
 });
 
+// Session History endpoints
+app.get('/api/session/history', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 20;
+    console.log(`📜 [Session History] Loading last ${limit} messages`);
+    
+    const messages = await loadSessionHistory(limit);
+    
+    console.log(`✅ [Session History] Loaded ${messages.length} messages`);
+    
+    res.json({
+      success: true,
+      messages
+    });
+  } catch (error) {
+    console.error(`❌ [Session History] Error loading:`, error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+app.post('/api/session/history', async (req: Request, res: Response) => {
+  try {
+    const { role, content, timestamp } = req.body;
+    
+    if (!role || !content || !timestamp) {
+      res.status(400).json({
+        success: false,
+        error: 'role, content, and timestamp are required'
+      });
+      return;
+    }
+    
+    if (role !== 'user' && role !== 'assistant') {
+      res.status(400).json({
+        success: false,
+        error: 'role must be "user" or "assistant"'
+      });
+      return;
+    }
+    
+    await saveSessionMessage({ role, content, timestamp });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error(`❌ [Session History] Error saving:`, error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+app.delete('/api/session/history', async (req: Request, res: Response) => {
+  try {
+    console.log(`🗑️ [Session History] Clearing history`);
+    
+    await clearSessionHistory();
+    
+    console.log(`✅ [Session History] History cleared`);
+    
+    res.json({
+      success: true,
+      message: 'Historial borrado. ¡Empezamos de nuevo!'
+    });
+  } catch (error) {
+    console.error(`❌ [Session History] Error clearing:`, error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Window Management endpoints
 app.post('/api/apps/close', async (req: Request, res: Response) => {
   try {
@@ -1067,6 +1169,24 @@ const registry = new SkillRegistry()
   .register(new TextEditSkill());
 const guard = new RiskGuard();
 
+// Initialize ContextBuilder
+const contextBuilder = new ContextBuilder({
+  maxHistoryEntries: 10,
+  maxContextSize: 8000,
+  includeSystemInfo: true,
+});
+
+// Initialize SecurityGuard with Allowlist
+let securityGuard: SecurityGuard;
+(async () => {
+  const allowlist = await Allowlist.loadFromFile('./config/allowlist.json');
+  securityGuard = new SecurityGuard(guard, { 
+    allowlist,
+    enableLogging: true,
+  });
+  console.log('[SecurityGuard] Initialized with allowlist');
+})();
+
 // ── Endpoint unificado ────────────────────────────────────────────────────────
 
 app.post('/api/command', async (req: Request, res: Response) => {
@@ -1125,7 +1245,18 @@ app.post('/api/command', async (req: Request, res: Response) => {
     console.log(`🤖 [Command] Unknown intent, trying free-form with Ollama`);
     
     try {
-      const freeFormResult = await handleFreeForm(text, registry);
+      // Load recent session history for context
+      const sessionHistory = await loadSessionHistory(10);
+      
+      // Convert to conversation message format
+      const conversationHistory = sessionHistory.map(msg => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content
+      }));
+      
+      console.log(`📜 [Command] Loaded ${conversationHistory.length} messages from session history`);
+      
+      const freeFormResult = await handleFreeForm(text, registry, contextBuilder, conversationHistory);
       
       // Log to history
       await saveCommandToHistory({
@@ -1164,6 +1295,43 @@ app.post('/api/command', async (req: Request, res: Response) => {
           intent: 'unknown',
           skill: 'none',
           confidence: 0,
+          executionTime: Date.now() - startTime,
+          method: parsed.method,
+        },
+      });
+    }
+  }
+
+  // ── Handle clear_history command directly ──────────────────────────────────
+  if (context.intent === 'clear_history') {
+    clearInFlight();
+    
+    try {
+      await clearSessionHistory();
+      
+      console.log(`✅ [Command] Session history cleared — ${Date.now() - startTime}ms`);
+      
+      return res.json({
+        success: true,
+        message: 'Historial borrado. ¡Empezamos de nuevo!',
+        meta: {
+          intent: 'clear_history',
+          skill: 'system',
+          confidence: 1.0,
+          executionTime: Date.now() - startTime,
+          method: parsed.method,
+        },
+      });
+    } catch (error) {
+      console.error('[Command] Clear history error:', error);
+      return res.json({
+        success: false,
+        message: 'Error al borrar el historial',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        meta: {
+          intent: 'clear_history',
+          skill: 'system',
+          confidence: 1.0,
           executionTime: Date.now() - startTime,
           method: parsed.method,
         },
@@ -1242,8 +1410,8 @@ app.post('/api/command', async (req: Request, res: Response) => {
     });
   }
 
-  // ── Ejecutar con RiskGuard ──────────────────────────────────────────────────
-  const result = await guard.execute(skill, context);
+  // ── Ejecutar con SecurityGuard ──────────────────────────────────────────────
+  const result = await securityGuard.execute(skill, context);
 
   // ── Narrar resultado con Ollama (solo si fue exitoso) ──────────────────────
   if (result.success && NARRATION_ENABLED) {
@@ -1349,4 +1517,7 @@ app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/api/memory/load`);
   console.log(`   POST http://localhost:${PORT}/api/command-history/save`);
   console.log(`   GET  http://localhost:${PORT}/api/command-history`);
+  console.log(`   GET  http://localhost:${PORT}/api/session/history`);
+  console.log(`   POST http://localhost:${PORT}/api/session/history`);
+  console.log(`   DELETE http://localhost:${PORT}/api/session/history`);
 });

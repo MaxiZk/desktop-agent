@@ -1,0 +1,18 @@
+{
+  "apps": [
+    "chrome",
+    "notepad",
+    "calculator",
+    "vscode",
+    "excel",
+    "gedit",
+    "mate-calc",
+    "tilix",
+    "nemo"
+  ],
+  "paths": [
+    "*/Desktop/*",
+    "*/Documents/*",
+    "*/Downloads/*"
+  ]
+}

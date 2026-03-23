@@ -14,12 +14,13 @@ import { readFileByPath } from '../read_file_by_path.js';
 import { openFile }       from '../open_file.js';
 import { openFolder }     from '../open_folder.js';
 import { analyzeCSV }     from '../analyze_csv.js';
+import { listArchive, extractArchive, createArchive } from '../archive_operations.js';
 
 import type { Skill, SkillResult, SkillContext } from '../Skill.js';
 
 export class FileSkill implements Skill {
   readonly name = 'file';
-  readonly description = 'Busca, lee y abre archivos del sistema de archivos';
+  readonly description = 'Busca, lee, abre y gestiona archivos y archivos comprimidos';
   readonly riskLevel = 'low' as const;
   readonly supportedIntents = [
     'search_files',
@@ -27,6 +28,9 @@ export class FileSkill implements Skill {
     'open_file',
     'open_folder',
     'analyze_csv',
+    'archive_list',
+    'archive_extract',
+    'archive_create',
   ];
 
   validate(_context: SkillContext): string | null {
@@ -115,6 +119,39 @@ export class FileSkill implements Skill {
           data: { rows: r.data, headers: r.headers, rowCount: r.rowCount },
           error: r.error,
         };
+      }
+
+      case 'archive_list': {
+        const archivePath = String(params.archivePath ?? '');
+        if (!archivePath) {
+          return { success: false, message: 'Se requiere la ruta del archivo comprimido' };
+        }
+        return await listArchive(archivePath);
+      }
+
+      case 'archive_extract': {
+        const archivePath = String(params.archivePath ?? '');
+        if (!archivePath) {
+          return { success: false, message: 'Se requiere la ruta del archivo comprimido' };
+        }
+        const destPath = params.destPath ? String(params.destPath) : undefined;
+        return await extractArchive(archivePath, destPath);
+      }
+
+      case 'archive_create': {
+        const outputPath = String(params.outputPath ?? '');
+        const sourcePaths = Array.isArray(params.sourcePaths)
+          ? params.sourcePaths.map(String)
+          : params.sourcePaths
+          ? [String(params.sourcePaths)]
+          : [];
+        if (!outputPath) {
+          return { success: false, message: 'Se requiere la ruta del archivo zip de salida' };
+        }
+        if (sourcePaths.length === 0) {
+          return { success: false, message: 'Se requiere al menos un archivo a comprimir' };
+        }
+        return await createArchive(outputPath, sourcePaths);
       }
 
       default:

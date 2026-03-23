@@ -308,6 +308,86 @@ describe('CommandRouter', () => {
     });
   });
 
+  describe('game intents', () => {
+    it('should detect "jugá minecraft" (español)', () => {
+      const result = parseCommand('jugá minecraft');
+      expect(result.intent).toBe('launch_game');
+      expect(result.params.gameName).toBe('minecraft');
+    });
+
+    it('should detect "play cs2" (inglés)', () => {
+      const result = parseCommand('play cs2');
+      expect(result.intent).toBe('launch_game');
+      expect(result.params.gameName).toBe('cs2');
+    });
+
+    it('should detect "jugá dota2" (español con jugá)', () => {
+      const result = parseCommand('jugá dota2');
+      expect(result.intent).toBe('launch_game');
+      expect(result.params.gameName).toBe('dota2');
+    });
+
+    it('should detect "launch el juego minecraft" (inglés explícito)', () => {
+      const result = parseCommand('launch el juego minecraft');
+      expect(result.intent).toBe('launch_game');
+      expect(result.params.gameName).toBe('minecraft');
+    });
+
+    it('should detect "lista juegos" (español)', () => {
+      const result = parseCommand('lista juegos');
+      expect(result.intent).toBe('list_games');
+      expect(result.params).toEqual({});
+    });
+
+    it('should detect "list games" (inglés)', () => {
+      const result = parseCommand('list games');
+      expect(result.intent).toBe('list_games');
+    });
+
+    it('should detect "abrí steam" (español)', () => {
+      const result = parseCommand('abrí steam');
+      expect(result.intent).toBe('open_steam');
+    });
+
+    it('should detect "open steam" (inglés)', () => {
+      const result = parseCommand('open steam');
+      expect(result.intent).toBe('open_steam');
+    });
+  });
+
+  describe('archive intents', () => {
+    it('should detect "listá archivo.zip" (español)', () => {
+      const result = parseCommand('listá archivo.zip');
+      expect(result.intent).toBe('archive_list');
+      expect(result.params.archivePath).toBe('archivo.zip');
+    });
+
+    it('should detect "list contents of backup.tar.gz" (inglés)', () => {
+      const result = parseCommand('list contents of backup.tar.gz');
+      expect(result.intent).toBe('archive_list');
+      expect(result.params.archivePath).toBe('backup.tar.gz');
+    });
+
+    it('should detect "extraé archivo.zip" (español, no dest)', () => {
+      const result = parseCommand('extraé archivo.zip');
+      expect(result.intent).toBe('archive_extract');
+      expect(result.params.archivePath).toBe('archivo.zip');
+    });
+
+    it('should detect "extract backup.zip to /tmp/out" (inglés, with dest)', () => {
+      const result = parseCommand('extract backup.zip to /tmp/out');
+      expect(result.intent).toBe('archive_extract');
+      expect(result.params.archivePath).toBe('backup.zip');
+      expect(result.params.destPath).toBe('/tmp/out');
+    });
+
+    it('should detect "unzip archive.zip" (inglés)', () => {
+      const result = parseCommand('unzip archive.zip');
+      expect(result.intent).toBe('archive_extract');
+      expect(result.params.archivePath).toBe('archive.zip');
+    });
+  });
+
   describe('buildContext', () => {
     it('should build complete SkillContext', () => {
       const context = buildContext('abrí chrome', false);

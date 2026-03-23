@@ -15,6 +15,7 @@ import { AppSkill }        from '../src/skills/impl/AppSkill.js';
 import { FileSkill }       from '../src/skills/impl/FileSkill.js';
 import { SystemSkill }     from '../src/skills/impl/SystemSkill.js';
 import { TextEditSkill }   from '../src/skills/impl/TextEditSkill.js';
+import { GameSkill }       from '../src/skills/impl/GameSkill.js';
 import { narrateResult }   from '../src/skills/utils/NarratorService.js';
 import { handleFreeForm }  from '../src/skills/utils/FreeFormHandler.js';
 
@@ -52,7 +53,10 @@ import {
   requestShutdown,
   requestRestart,
   requestSleep,
-  confirmSystemAction
+  confirmSystemAction,
+  listArchive,
+  extractArchive,
+  createArchive,
 } from '../src/backend/index.js';
 import type { CommandHistoryEntry } from '../src/backend/index.js';
 
@@ -1064,7 +1068,8 @@ const registry = new SkillRegistry()
   .register(new AppSkill())
   .register(new FileSkill())
   .register(new SystemSkill())
-  .register(new TextEditSkill());
+  .register(new TextEditSkill())
+  .register(new GameSkill());
 const guard = new RiskGuard();
 
 // ── Endpoint unificado ────────────────────────────────────────────────────────
@@ -1203,6 +1208,55 @@ app.post('/api/command', async (req: Request, res: Response) => {
     });
   }
 
+  // ── Handle history command directly ────────────────────────────────────────
+  if (context.intent === 'show_history') {
+    clearInFlight();
+
+    try {
+      const historyResult = await getCommandHistory(10);
+      const entries = historyResult.history ?? [];
+
+      let message: string;
+      if (entries.length === 0) {
+        message = 'No hay comandos en el historial todavía.';
+      } else {
+        message = `📋 Últimos ${entries.length} comandos:\n\n`;
+        entries.forEach((entry, i) => {
+          const time = new Date(entry.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+          message += `${i + 1}. [${time}] ${entry.command} → ${entry.intent}\n`;
+        });
+      }
+
+      console.log(`✅ [Command] History requested — ${Date.now() - startTime}ms`);
+
+      return res.json({
+        success: true,
+        message,
+        data: { history: entries, count: entries.length },
+        meta: {
+          intent: 'show_history',
+          skill: 'system',
+          confidence: 1.0,
+          executionTime: Date.now() - startTime,
+          method: parsed.method,
+        },
+      });
+    } catch (_err) {
+      clearInFlight();
+      return res.json({
+        success: false,
+        message: 'No pude cargar el historial.',
+        meta: {
+          intent: 'show_history',
+          skill: 'system',
+          confidence: 1.0,
+          executionTime: Date.now() - startTime,
+          method: parsed.method,
+        },
+      });
+    }
+  }
+
   // ── Resolver skill ──────────────────────────────────────────────────────────
   const skill = registry.resolve(context.intent);
 
@@ -1301,15 +1355,52 @@ app.get('/api/skills', (req: Request, res: Response) => {
   });
 });
 
-// Ver acciones pendientes de confirmación (removed - not implemented in RiskGuard)
-// app.get('/api/command/pending', (req: Request, res: Response) => {
-//   res.json({
-//     success: true,
-//     pending: guard.listPending(),
-//   });
-// });
+// Archive endpoints
+app.post('/api/archive/list', async (req: Request, res: Response) => {
+  try {
+    const { archivePath } = req.body;
+    if (!archivePath) {
+      res.status(400).json({ success: false, error: 'archivePath is required' });
+      return;
+    }
+    console.log(`📦 [Archive] Listing contents: ${archivePath}`);
+    const result = await listArchive(archivePath);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
 
+app.post('/api/archive/extract', async (req: Request, res: Response) => {
+  try {
+    const { archivePath, destPath } = req.body;
+    if (!archivePath) {
+      res.status(400).json({ success: false, error: 'archivePath is required' });
+      return;
+    }
+    console.log(`📦 [Archive] Extracting: ${archivePath}`);
+    const result = await extractArchive(archivePath, destPath);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
 
+app.post('/api/archive/create', async (req: Request, res: Response) => {
+  try {
+    const { outputPath, sourcePaths } = req.body;
+    if (!outputPath || !sourcePaths) {
+      res.status(400).json({ success: false, error: 'outputPath and sourcePaths are required' });
+      return;
+    }
+    const sources = Array.isArray(sourcePaths) ? sourcePaths : [sourcePaths];
+    console.log(`📦 [Archive] Creating: ${outputPath}`);
+    const result = await createArchive(outputPath, sources);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
@@ -1349,4 +1440,8 @@ app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/api/memory/load`);
   console.log(`   POST http://localhost:${PORT}/api/command-history/save`);
   console.log(`   GET  http://localhost:${PORT}/api/command-history`);
+  console.log(`   POST http://localhost:${PORT}/api/archive/list`);
+  console.log(`   POST http://localhost:${PORT}/api/archive/extract`);
+  console.log(`   POST http://localhost:${PORT}/api/archive/create`);
+  console.log(`   POST http://localhost:${PORT}/api/command  (unified NLP endpoint)`);
 });

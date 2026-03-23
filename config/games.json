@@ -1,0 +1,88 @@
+{
+  "games": {
+    "minecraft": {
+      "launcher": "url",
+      "value": "minecraft://",
+      "steamAppId": null,
+      "aliases": ["mc", "minecraft java"],
+      "category": "sandbox"
+    },
+    "cs2": {
+      "launcher": "steam",
+      "steamAppId": "730",
+      "value": "steam://rungameid/730",
+      "aliases": ["counter-strike 2", "counter strike 2", "csgo", "cs go", "cs:go"],
+      "category": "shooter"
+    },
+    "dota2": {
+      "launcher": "steam",
+      "steamAppId": "570",
+      "value": "steam://rungameid/570",
+      "aliases": ["dota 2", "dota"],
+      "category": "moba"
+    },
+    "gta5": {
+      "launcher": "steam",
+      "steamAppId": "271590",
+      "value": "steam://rungameid/271590",
+      "aliases": ["gta v", "gta 5", "grand theft auto 5", "grand theft auto v"],
+      "category": "action"
+    },
+    "cyberpunk2077": {
+      "launcher": "steam",
+      "steamAppId": "1091500",
+      "value": "steam://rungameid/1091500",
+      "aliases": ["cyberpunk", "cyberpunk 2077", "cp2077"],
+      "category": "rpg"
+    },
+    "elden_ring": {
+      "launcher": "steam",
+      "steamAppId": "1245620",
+      "value": "steam://rungameid/1245620",
+      "aliases": ["elden ring", "eldenring"],
+      "category": "rpg"
+    },
+    "rdr2": {
+      "launcher": "steam",
+      "steamAppId": "1174180",
+      "value": "steam://rungameid/1174180",
+      "aliases": ["red dead redemption 2", "rdr 2", "red dead 2"],
+      "category": "action"
+    },
+    "valheim": {
+      "launcher": "steam",
+      "steamAppId": "892970",
+      "value": "steam://rungameid/892970",
+      "aliases": ["valheim"],
+      "category": "survival"
+    },
+    "stardew": {
+      "launcher": "steam",
+      "steamAppId": "413150",
+      "value": "steam://rungameid/413150",
+      "aliases": ["stardew valley", "stardew valley game"],
+      "category": "simulation"
+    },
+    "among_us": {
+      "launcher": "steam",
+      "steamAppId": "945360",
+      "value": "steam://rungameid/945360",
+      "aliases": ["among us", "amongus"],
+      "category": "social"
+    },
+    "steam": {
+      "launcher": "url",
+      "value": "steam://open/main",
+      "steamAppId": null,
+      "aliases": ["steam client", "steam store"],
+      "category": "platform"
+    },
+    "epic": {
+      "launcher": "command",
+      "value": "com.epicgames.launcher://",
+      "steamAppId": null,
+      "aliases": ["epic games", "epic games launcher", "epic launcher"],
+      "category": "platform"
+    }
+  }
+}

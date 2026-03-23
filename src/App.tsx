@@ -53,11 +53,12 @@ interface UnifiedCommandResponse {
 
 function formatHelpContent(data: HelpData): string {
   const skillIcons: Record<string, string> = {
-    'FileSkill': '📁',
-    'AppSkill': '⚙️',
-    'ExcelSkill': '📊',
-    'SystemSkill': '🔒',
-    'TextEditSkill': '✏️',
+    'file': '📁',
+    'app': '⚙️',
+    'excel': '📊',
+    'system': '🔒',
+    'textedit': '✏️',
+    'game': '🎮',
   }
 
   const intentExamples: Record<string, string[]> = {
@@ -72,6 +73,8 @@ function formatHelpContent(data: HelpData): string {
       'buscá ventas.xlsx',
       'leé archivo config.txt',
       'abrí archivo C:/Users/archivo.pdf',
+      'listá archivo.zip',
+      'extraé archivo.zip',
     ],
     excel: [
       'resumen por mes de ventas.xlsx',
@@ -89,6 +92,13 @@ function formatHelpContent(data: HelpData): string {
       'agregá al final de notas.txt: reunión el lunes',
       'reemplazá "viejo texto" por "nuevo texto" en archivo.txt',
       'eliminá la línea "texto a borrar" de notas.txt',
+    ],
+    game: [
+      'jugá minecraft',
+      'jugá cs2',
+      'lanzá dota2',
+      'lista juegos',
+      'abrí steam',
     ],
   }
 

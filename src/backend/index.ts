@@ -58,3 +58,7 @@ export type { WindowManagementResult, RunningApp, RunningAppsResult } from '../s
 // Re-export System Controls functions
 export { lockPC, requestShutdown, shutdownPC, requestRestart, restartPC, requestSleep, sleepPC, confirmSystemAction } from '../skills/system_controls';
 export type { SystemControlResult } from '../skills/system_controls';
+
+// Re-export Archive Operations
+export { listArchive, extractArchive, createArchive } from '../skills/archive_operations';
+export type { ArchiveResult } from '../skills/archive_operations';

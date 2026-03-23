@@ -245,6 +245,35 @@ const RULES: IntentRule[] = [
     ],
     extractParams: (_text, match) => ({ appName: match[1].trim() }),
   },
+
+  // --- Juegos (específicos, antes de open_app genérico) ---
+  {
+    intent: 'list_games',
+    patterns: [
+      /^(?:lista[r]?|mostráme|ver|qué)\s+(?:mis\s+)?juegos?(?:\s+disponibles?)?$/i,
+      /^(?:list|show)\s+games?$/i,
+      /^(?:biblioteca|library)\s+(?:de\s+)?juegos?$/i,
+    ],
+    extractParams: () => ({}),
+  },
+  {
+    intent: 'open_steam',
+    patterns: [
+      /^(?:abrí?|abrir?|open)\s+steam\s*$/i,
+      /^steam\s*$/i,
+    ],
+    extractParams: () => ({}),
+  },
+  {
+    intent: 'launch_game',
+    patterns: [
+      /^(?:jug[aá]r?|jugá|play)\s+(.+)$/i,
+      /^(?:lanz[aá]r?|lanzá|launch)\s+el\s+juego\s+(.+)$/i,
+      /^(?:inici[aá]r?|iniciá)\s+el\s+juego\s+(.+)$/i,
+    ],
+    extractParams: (_text, match) => ({ gameName: match[1].trim() }),
+  },
+
   {
     intent: 'open_app',
     patterns: [
@@ -257,6 +286,38 @@ const RULES: IntentRule[] = [
       /ejecut[aá]\s+(?!archivo\s)(.+)/i,
     ],
     extractParams: (_text, match) => ({ appName: match[1].trim() }),
+  },
+
+  // --- Archivos comprimidos (antes de archivos genéricos) ---
+  {
+    intent: 'archive_list',
+    patterns: [
+      /^(?:listá|listar?|mostráme|ver|abr[ií])\s+(?:el\s+)?(?:contenido\s+(?:de[l]?\s+)?)?(.+\.(?:zip|tar|rar|tar\.gz|tgz|tar\.bz2|tbz2))$/i,
+      /^(?:list|show)\s+(?:contents?\s+of\s+)?(.+\.(?:zip|tar|rar|tar\.gz|tgz|tar\.bz2|tbz2))$/i,
+    ],
+    extractParams: (_text, match) => ({ archivePath: match[1].trim() }),
+  },
+  {
+    intent: 'archive_extract',
+    patterns: [
+      /^(?:extraé|extraer?|descomprimir?|descomprimí)\s+(.+\.(?:zip|tar|rar|tar\.gz|tgz|tar\.bz2|tbz2))(?:\s+(?:en|a|to|into)\s+(.+))?$/i,
+      /^(?:extract|unzip|unpack)\s+(.+\.(?:zip|tar|rar|tar\.gz|tgz|tar\.bz2|tbz2))(?:\s+(?:to|into)\s+(.+))?$/i,
+    ],
+    extractParams: (_text, match) => ({
+      archivePath: match[1].trim(),
+      destPath: match[2]?.trim() ?? null,
+    }),
+  },
+  {
+    intent: 'archive_create',
+    patterns: [
+      /^(?:comprimir?|comprimí|crear?\s+zip|crear?\s+archivo)\s+(.+)\s+(?:en|como|a)\s+(.+\.zip)$/i,
+      /^(?:zip|compress|pack)\s+(.+)\s+(?:to|as|into)\s+(.+\.zip)$/i,
+    ],
+    extractParams: (_text, match) => ({
+      sourcePaths: [match[1].trim()],
+      outputPath: match[2].trim(),
+    }),
   },
 
   // --- Historial / Ayuda ---

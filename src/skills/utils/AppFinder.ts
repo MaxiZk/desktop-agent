@@ -10,13 +10,46 @@
  */
 
 import { exec, execSync } from 'child_process';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readdirSync, statSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 export interface AppLaunchResult {
   success: boolean;
   message: string;
   error?: string;
+}
+
+/**
+ * Calculate Levenshtein distance between two strings
+ * Used for fuzzy matching app names
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+
+  // Initialize matrix
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  // Fill matrix
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
 }
 
 /**
@@ -122,6 +155,7 @@ async function tryPathLookup(appName: string): Promise<AppLaunchResult | null> {
 /**
  * STRATEGY 2b: Linux .desktop file discovery
  * Searches for installed apps via .desktop files in standard locations
+ * Now with fuzzy matching support
  */
 async function findLinuxDesktopApp(appName: string): Promise<string | null> {
   if (process.platform !== 'linux') return null;
@@ -129,12 +163,16 @@ async function findLinuxDesktopApp(appName: string): Promise<string | null> {
   const normalized = appName.toLowerCase().replace(/\s+/g, '');
   
   try {
-    // Search all .desktop files in standard locations
+    // Search all .desktop files in standard locations including Flatpak
     const dirs = [
       '/usr/share/applications',
       '/usr/local/share/applications',
       `${process.env.HOME}/.local/share/applications`,
+      '/var/lib/flatpak/exports/share/applications',
+      `${process.env.HOME}/.local/share/flatpak/exports/share/applications`,
     ];
+
+    let bestMatch: { file: string; exec: string; distance: number } | null = null;
 
     for (const dir of dirs) {
       try {
@@ -144,29 +182,54 @@ async function findLinuxDesktopApp(appName: string): Promise<string | null> {
           .filter(f => f.length > 0);
 
         for (const file of files) {
-          const filename = file.split('/').pop()?.replace('.desktop', '').toLowerCase() ?? '';
-          
-          // Match if filename contains normalized name or vice versa
-          if (filename.includes(normalized) || normalized.includes(filename.split('-')[0])) {
-            // Extract Exec= line from .desktop file
-            const content = execSync(`cat "${file}" 2>/dev/null`, { encoding: 'utf-8' });
-            const execLine = content
-              .split('\n')
-              .find(l => l.startsWith('Exec='))
-              ?.replace('Exec=', '')
-              ?.split(' ')[0]
-              ?.replace(/%[uUfFdDnNickvm]/g, '')
-              ?.trim();
+          try {
+            const content = readFileSync(file, 'utf-8');
+            const lines = content.split('\n');
             
-            if (execLine) {
-              console.log(`[AppFinder] Found .desktop file: ${file} -> ${execLine}`);
-              return execLine;
+            // Extract Name= and Exec= from .desktop file
+            const nameLine = lines.find(l => l.startsWith('Name='));
+            const execLine = lines.find(l => l.startsWith('Exec='));
+            
+            if (!nameLine || !execLine) continue;
+            
+            const appNameFromFile = nameLine.replace('Name=', '').trim().toLowerCase();
+            const execCommand = execLine
+              .replace('Exec=', '')
+              .split(' ')[0]
+              .replace(/%[uUfFdDnNickvm]/g, '')
+              .trim();
+            
+            if (!execCommand) continue;
+            
+            // Calculate fuzzy match distance
+            const distance = levenshteinDistance(normalized, appNameFromFile.replace(/\s+/g, ''));
+            
+            // Accept if distance <= 2 (allows for minor typos)
+            if (distance <= 2) {
+              if (!bestMatch || distance < bestMatch.distance) {
+                bestMatch = { file, exec: execCommand, distance };
+              }
             }
+            
+            // Also check filename match
+            const filename = file.split('/').pop()?.replace('.desktop', '').toLowerCase() ?? '';
+            if (filename.includes(normalized) || normalized.includes(filename.split('-')[0])) {
+              if (!bestMatch || 0 < bestMatch.distance) {
+                bestMatch = { file, exec: execCommand, distance: 0 };
+              }
+            }
+          } catch {
+            continue;
           }
         }
       } catch {
         continue;
       }
+    }
+
+    if (bestMatch) {
+      console.log(`[AppFinder] Found .desktop file: ${bestMatch.file} -> ${bestMatch.exec} (distance: ${bestMatch.distance})`);
+      return bestMatch.exec;
     }
   } catch {
     // Ignore errors
@@ -242,12 +305,12 @@ async function tryWindowsProgramFiles(appName: string): Promise<AppLaunchResult 
 }
 
 /**
- * STRATEGY 3: Linux bin search
+ * STRATEGY 3: Linux bin search (including Snap)
  */
 async function tryLinuxBinSearch(appName: string): Promise<AppLaunchResult | null> {
   if (process.platform !== 'linux') return null;
 
-  const searchDirs = ['/usr/bin', '/usr/local/bin', '/opt'];
+  const searchDirs = ['/usr/bin', '/usr/local/bin', '/opt', '/snap/bin'];
 
   for (const dir of searchDirs) {
     if (!existsSync(dir)) continue;
@@ -256,7 +319,8 @@ async function tryLinuxBinSearch(appName: string): Promise<AppLaunchResult | nul
       const entries = readdirSync(dir);
       
       for (const entry of entries) {
-        if (entry.toLowerCase() === appName.toLowerCase()) {
+        if (entry.toLowerCase() === appName.toLowerCase() || 
+            entry.toLowerCase().includes(appName.toLowerCase())) {
           const fullPath = join(dir, entry);
           
           if (existsSync(fullPath)) {

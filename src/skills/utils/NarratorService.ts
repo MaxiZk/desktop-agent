@@ -52,22 +52,50 @@ function translateFallback(message: string): string {
 }
 
 /**
+ * Detect language from text
+ */
+function detectLanguage(text: string): string {
+  if (!text) return 'Spanish (rioplatense)';
+  
+  const spanishWords = /\b(el|la|los|las|un|una|que|por|para|con|del|al|es|son|tiene|puede|quiero|necesito|podes|podés|hola|soy|abrí|cerrá|buscá|crea|dale|listo|gracias|por favor|ahora|después|antes|cuando|como|donde|esto|ese|esa)\b/gi;
+  const englishWords = /\b(the|is|are|was|were|have|has|can|could|would|should|will|this|that|open|close|find|create|show|please|thanks|now|after|before|when|how|where)\b/gi;
+  
+  const spanishScore = (text.match(spanishWords) || []).length;
+  const englishScore = (text.match(englishWords) || []).length;
+  
+  // Default to Spanish unless clearly more English words
+  return englishScore > spanishScore ? 'English' : 'Spanish (rioplatense)';
+}
+
+/**
  * Generate a natural language narration for a skill execution result
  * 
  * @param result - The skill execution result
+ * @param userMessage - Optional user message for language detection
  * @returns Promise<string> - Narrated message (or original message if AI fails)
  */
 export async function narrateResult(
-  result: SkillResult
+  result: SkillResult,
+  userMessage?: string
 ): Promise<string> {
   const startTime = Date.now();
 
   try {
+    // Detect language from user message or result message
+    const detectedLang = detectLanguage(userMessage || result.message);
+    const isSpanish = /\b(el|la|los|las|que|por|para|con|es|son|podes|podés|hola|soy|me|mi|tu|le|se)\b/i.test(userMessage || result.message);
+    const langInstruction = isSpanish 
+      ? 'IMPORTANTE: El usuario escribió en español. Respondé SOLO en español rioplatense.'
+      : 'IMPORTANT: The user wrote in English. Respond ONLY in English.';
+    
     // Build prompt for AI
-    const prompt = `En una oración natural en español, describí esta acción:
+    const prompt = `${langInstruction}
+
+The user's message was in ${detectedLang} language.
+Respond in that same language. In 1-2 natural sentences, describe this action:
 "${result.message}"
 
-Terminá con una pregunta corta de seguimiento.`;
+End with a short follow-up question.`;
 
     // Try Claude first
     const claudeResult = await askClaude(prompt, []);
@@ -81,7 +109,13 @@ Terminá con una pregunta corta de seguimiento.`;
     console.log('[Narrator] Claude unavailable:', claudeResult.error);
 
     // Fallback to Ollama
-    const ollamaPrompt = buildNarrationPrompt(result);
+    const isSpanishOllama = /\b(el|la|los|las|que|por|para|con|es|son|podes|podés|hola|soy|me|mi|tu|le|se)\b/i.test(userMessage || result.message);
+    const langInstructionOllama = isSpanishOllama 
+      ? 'IMPORTANTE: El usuario escribió en español. Respondé SOLO en español rioplatense.'
+      : 'IMPORTANT: The user wrote in English. Respond ONLY in English.';
+    
+    const detectedLangSimple = isSpanishOllama ? 'español rioplatense' : 'English';
+    const ollamaPrompt = buildNarrationPrompt(result, detectedLangSimple, langInstructionOllama);
 
     // Call Ollama with 8 second timeout
     const ollamaResult = await Promise.race([
@@ -139,8 +173,10 @@ function isInvalidResponse(text: string): boolean {
 /**
  * Build the narration prompt for Ollama
  */
-function buildNarrationPrompt(result: SkillResult): string {
-  return `Completá esta frase en español, máximo 8 palabras:
+function buildNarrationPrompt(result: SkillResult, language: string, langInstruction: string): string {
+  return `${langInstruction}
+
+Completá esta frase en ${language}, máximo 8 palabras:
 "${result.message}. ¿"`;
 }
 

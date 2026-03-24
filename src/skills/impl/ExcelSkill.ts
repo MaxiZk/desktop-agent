@@ -48,6 +48,10 @@ export class ExcelSkill implements Skill {
     if (!context.params.filePath || typeof context.params.filePath !== 'string') {
       return '¿Con qué archivo Excel querés que trabaje? Decime la ruta o el nombre del archivo.';
     }
+    
+    // Normalize path (replace backslashes with forward slashes)
+    context.params.filePath = (context.params.filePath as string).replace(/\\/g, '/');
+    
     return null;
   }
 
@@ -87,12 +91,21 @@ export class ExcelSkill implements Skill {
       }
 
       case 'excel_append_row': {
-        const filePath = String(params.filePath ?? '');
-        const content = String(params.content ?? '');
-        const values = content.split(',').map((s: string) => s.trim());
+        const filePath = String(params.filePath ?? params.file ?? params.path ?? '');
+        const content = String(params.content ?? params.data ?? params.values ?? params.row ?? '');
+        const rows = String(params.rows ?? '');
+        
+        console.log('[ExcelSkill] append_row - filePath:', filePath, 'content:', content, 'rows:', rows);
+        
+        // Support multiple rows separated by newline or semicolon
+        const allContent = rows || content;
+        
+        if (!allContent) {
+          return { success: false, message: 'Necesito los datos a agregar' };
+        }
         
         if (!filePath) {
-          return { success: false, message: 'Indicame el archivo Excel' };
+          return { success: false, message: 'No recibí la ruta del archivo. Indicame dónde está el archivo Excel' };
         }
         
         const absPath = resolve(filePath);
@@ -103,10 +116,24 @@ export class ExcelSkill implements Skill {
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.readFile(absPath);
         const ws = workbook.worksheets[0];
-        ws.addRow(values);
+        
+        // Split by newline or semicolon for multiple rows
+        const rowsData = allContent
+          .split(/[\n;]/)
+          .map(r => r.trim())
+          .filter(Boolean)
+          .map(r => r.split(',').map(v => v.trim()));
+        
+        for (const row of rowsData) {
+          ws.addRow(row);
+        }
+        
         await workbook.xlsx.writeFile(absPath);
         
-        return { success: true, message: `Fila agregada: ${values.join(', ')}` };
+        return {
+          success: true,
+          message: `Agregué ${rowsData.length} fila(s) en ${absPath}`
+        };
       }
 
       case 'excel_csv_to_xlsx':

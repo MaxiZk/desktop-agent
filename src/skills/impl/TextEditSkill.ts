@@ -13,6 +13,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 import type { Skill, SkillResult, SkillContext } from '../Skill.js';
+import AdmZip from 'adm-zip';
 
 export class TextEditSkill implements Skill {
   readonly name = 'textedit';
@@ -26,6 +27,8 @@ export class TextEditSkill implements Skill {
     'text_read',
     'txt_edit',
     'word_edit',
+    'word_append',
+    'word_replace',
   ];
 
   validate(context: SkillContext): string | null {
@@ -37,12 +40,12 @@ export class TextEditSkill implements Skill {
     }
 
     // text_append y text_prepend requieren content
-    if ((intent === 'text_append' || intent === 'text_prepend') && !params.content) {
+    if ((intent === 'text_append' || intent === 'text_prepend' || intent === 'word_append') && !params.content) {
       return 'Se requiere el contenido a agregar';
     }
 
-    // text_replace requiere search y replacement
-    if (intent === 'text_replace') {
+    // text_replace y word_replace requieren search y replacement
+    if (intent === 'text_replace' || intent === 'word_replace') {
       if (!params.search || typeof params.search !== 'string') {
         return 'Se requiere el texto a buscar';
       }
@@ -111,7 +114,7 @@ export class TextEditSkill implements Skill {
           
           return {
             success: true,
-            message: `Abrí ${filePath}. Para editarlo puedo agregar contenido al final. ¿Qué querés escribir?`,
+            message: `Abrí ${filePath}. Para editarlo puedo agregar contenido al final o reemplazar texto. ¿Qué querés hacer?`,
             data: { filePath: absolutePath }
           };
         }
@@ -132,6 +135,17 @@ export class TextEditSkill implements Skill {
 
         case 'text_delete':
           return await this.deleteLine(absolutePath, filePath, String(params.phrase ?? ''));
+
+        case 'word_append':
+          return await this.appendToWord(absolutePath, filePath, String(params.content ?? ''));
+
+        case 'word_replace':
+          return await this.replaceInWord(
+            absolutePath,
+            filePath,
+            String(params.search ?? ''),
+            String(params.replacement ?? '')
+          );
 
         default:
           return {
@@ -312,4 +326,132 @@ export class TextEditSkill implements Skill {
   private escapeRegex(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
+
+
+    // ── Word Operations ─────────────────────────────────────────────────────────
+
+    private async appendToWord(
+      absolutePath: string,
+      displayPath: string,
+      content: string
+    ): Promise<SkillResult> {
+      try {
+        if (!existsSync(absolutePath)) {
+          return {
+            success: false,
+            message: `El archivo no existe: ${displayPath}`,
+            error: 'File not found',
+          };
+        }
+
+        // Read existing document
+        const zip = new AdmZip(absolutePath);
+        const documentXml = zip.readAsText('word/document.xml');
+
+        // Find the last paragraph before </w:body>
+        const bodyEndIndex = documentXml.lastIndexOf('</w:body>');
+        if (bodyEndIndex === -1) {
+          return {
+            success: false,
+            message: `Formato de documento inválido: ${displayPath}`,
+            error: 'Invalid document format',
+          };
+        }
+
+        // Create new paragraph with content
+        const newParagraph = `<w:p><w:r><w:t>${this.escapeXml(content)}</w:t></w:r></w:p>`;
+
+        // Insert before </w:body>
+        const updatedXml =
+          documentXml.substring(0, bodyEndIndex) +
+          newParagraph +
+          documentXml.substring(bodyEndIndex);
+
+        // Update document.xml in zip
+        zip.updateFile('word/document.xml', Buffer.from(updatedXml, 'utf-8'));
+
+        // Write back to file
+        zip.writeZip(absolutePath);
+
+        return {
+          success: true,
+          message: `Texto agregado al final de ${displayPath}`,
+          data: { path: displayPath, addedContent: content },
+        };
+      } catch (error) {
+        return {
+          success: false,
+          message: `Error al agregar texto a ${displayPath}`,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+
+    private async replaceInWord(
+      absolutePath: string,
+      displayPath: string,
+      search: string,
+      replacement: string
+    ): Promise<SkillResult> {
+      try {
+        if (!existsSync(absolutePath)) {
+          return {
+            success: false,
+            message: `El archivo no existe: ${displayPath}`,
+            error: 'File not found',
+          };
+        }
+
+        // Read existing document
+        const zip = new AdmZip(absolutePath);
+        const documentXml = zip.readAsText('word/document.xml');
+
+        // Count occurrences
+        const searchEscaped = this.escapeXml(search);
+        const occurrences = (documentXml.match(new RegExp(searchEscaped, 'g')) || []).length;
+
+        if (occurrences === 0) {
+          return {
+            success: false,
+            message: `No se encontró "${search}" en ${displayPath}`,
+            error: 'Text not found',
+          };
+        }
+
+        // Replace all occurrences
+        const replacementEscaped = this.escapeXml(replacement);
+        const updatedXml = documentXml.replace(
+          new RegExp(searchEscaped, 'g'),
+          replacementEscaped
+        );
+
+        // Update document.xml in zip
+        zip.updateFile('word/document.xml', Buffer.from(updatedXml, 'utf-8'));
+
+        // Write back to file
+        zip.writeZip(absolutePath);
+
+        return {
+          success: true,
+          message: `Reemplazadas ${occurrences} ocurrencia(s) de "${search}" por "${replacement}" en ${displayPath}`,
+          data: { path: displayPath, search, replacement, occurrences },
+        };
+      } catch (error) {
+        return {
+          success: false,
+          message: `Error al reemplazar texto en ${displayPath}`,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+
+    private escapeXml(str: string): string {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    }
+
 }

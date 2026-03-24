@@ -152,18 +152,84 @@ export class AppSkill implements Skill {
     return { success: false, message: 'No pude abrir la aplicación' };
   }
 
+  /**
+   * Steam game launcher - maps game names to Steam App IDs
+   */
+  private async tryLaunchGame(name: string): Promise<SkillResult | null> {
+    // Steam App ID mapping for popular games
+    const STEAM_GAMES: Record<string, number> = {
+      'counter-strike': 730,
+      'cs': 730,
+      'csgo': 730,
+      'cs:go': 730,
+      'dota': 570,
+      'dota 2': 570,
+      'team fortress': 440,
+      'tf2': 440,
+      'left 4 dead': 500,
+      'l4d': 500,
+      'left 4 dead 2': 550,
+      'l4d2': 550,
+      'portal': 400,
+      'portal 2': 620,
+      'half-life': 70,
+      'half-life 2': 220,
+      'hl2': 220,
+      'garry\'s mod': 4000,
+      'gmod': 4000,
+      'rust': 252490,
+      'terraria': 105600,
+      'stardew valley': 413150,
+      'stardew': 413150,
+      'among us': 945360,
+      'valheim': 892970,
+      'ark': 346110,
+      'ark survival': 346110,
+    };
+
+    const normalized = name.toLowerCase().trim();
+    
+    // Check if name matches a known game
+    for (const [gameName, appId] of Object.entries(STEAM_GAMES)) {
+      if (normalized.includes(gameName) || gameName.includes(normalized)) {
+        console.log(`[AppSkill] Launching game via Steam: ${gameName} (App ID: ${appId})`);
+        
+        try {
+          if (isWindows()) {
+            await runShellCommand(`start steam://rungameid/${appId}`);
+          } else if (isLinux()) {
+            await runShellCommand(`nohup steam steam://rungameid/${appId} > /dev/null 2>&1 &`);
+          }
+          
+          return { success: true, message: `Abrí ${gameName} en Steam` };
+        } catch (error) {
+          console.error(`[AppSkill] Failed to launch game ${gameName}:`, error);
+          return { success: false, message: `No pude abrir ${gameName}`, error: error instanceof Error ? error.message : 'unknown' };
+        }
+      }
+    }
+    
+    return null; // No match found
+  }
+
   private async tryHardcoded(name: string): Promise<SkillResult | null> {
     const chromePhrases  = ['chrome', 'google chrome', 'chromium'];
     const vscodePhrases  = ['vscode', 'vs code', 'visual studio code', 'code'];
     const notepadPhrases = ['notepad', 'bloc de notas', 'bloc', 'editor', 'text editor'];
     const calcPhrases    = ['calculator', 'calculadora', 'calc'];
-    const steamPhrases   = ['steam'];
+    const steamPhrases   = ['steam', 'juegos', 'games', 'gaming'];
     const discordPhrases = ['discord'];
+    const minecraftPhrases = ['minecraft'];
+    const spotifyPhrases = ['spotify', 'música', 'musica'];
     const whatsappPhrases = ['whatsapp'];
     const settingsPhrases = ['settings', 'configuración', 'configuracion', 'ajustes', 'panel de control'];
     const explorerPhrases = ['explorador', 'explorer', 'archivos', 'file manager', 'files'];
     const taskMgrPhrases  = ['administrador de tareas', 'task manager', 'taskmgr', 'system monitor'];
     const terminalPhrases = ['terminal', 'consola', 'console', 'cmd', 'command prompt'];
+
+    // Try launching game via Steam first (before other checks)
+    const gameResult = await this.tryLaunchGame(name);
+    if (gameResult !== null) return gameResult;
 
     let result;
     if (chromePhrases.some(p => name.includes(p))) {
@@ -175,7 +241,33 @@ export class AppSkill implements Skill {
     } else if (calcPhrases.some(p => name.includes(p))) {
       result = await openCalculator();
     } else if (steamPhrases.some(p => name.includes(p))) {
-      result = await openSteam();
+      if (isWindows()) {
+        result = await openSteam();
+      } else if (isLinux()) {
+        return await this.tryLinuxAlternatives(['steam', 'steam-runtime'], 'Abrí Steam');
+      }
+    } else if (minecraftPhrases.some(p => name.includes(p))) {
+      if (isWindows()) {
+        try {
+          await runShellCommand('start minecraft://');
+          return { success: true, message: 'Abrí Minecraft' };
+        } catch (error) {
+          return { success: false, message: 'No pude abrir Minecraft', error: error instanceof Error ? error.message : 'unknown' };
+        }
+      } else if (isLinux()) {
+        return await this.tryLinuxAlternatives(['minecraft-launcher', 'minecraft'], 'Abrí Minecraft');
+      }
+    } else if (spotifyPhrases.some(p => name.includes(p))) {
+      if (isWindows()) {
+        try {
+          await runShellCommand('start spotify:');
+          return { success: true, message: 'Abrí Spotify' };
+        } catch (error) {
+          return { success: false, message: 'No pude abrir Spotify', error: error instanceof Error ? error.message : 'unknown' };
+        }
+      } else if (isLinux()) {
+        return await this.tryLinuxAlternatives(['spotify', '/snap/bin/spotify'], 'Abrí Spotify');
+      }
     } else if (discordPhrases.some(p => name.includes(p))) {
       result = await openDiscord();
     } else if (whatsappPhrases.some(p => name.includes(p))) {
@@ -253,6 +345,10 @@ export class AppSkill implements Skill {
       return { success: false, message: 'No pude abrir la Terminal' };
     } else {
       return null; // no match hardcoded
+    }
+
+    if (!result) {
+      return null;
     }
 
     return { success: result.success, message: result.message, error: result.error };

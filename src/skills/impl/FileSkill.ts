@@ -29,6 +29,9 @@ export class FileSkill implements Skill {
     'open_folder',
     'analyze_csv',
     'file_create',
+    'move_file',
+    'search_folder',
+    'find_and_open',
   ];
 
   validate(_context: SkillContext): string | null {
@@ -130,6 +133,140 @@ export class FileSkill implements Skill {
         
         const rawText = String(params.rawText ?? '');
         return this.createFile(filePath, rawText);
+      }
+
+      case 'move_file': {
+        const source = String(params.source ?? params.filePath ?? '');
+        const destination = String(params.destination ?? params.dest ?? '');
+        if (!source || !destination) {
+          return { 
+            success: false, 
+            message: 'Necesito la ruta origen y destino. Ejemplo: mové ventas.xlsx a /home/maximo/Documents/backup/' 
+          };
+        }
+
+        const { resolve, basename, join, dirname } = await import('path');
+        const { rename, mkdir, stat } = await import('fs/promises');
+        const { existsSync } = await import('fs');
+
+        const absSource = resolve(source);
+        let absDest = resolve(destination);
+
+        if (!existsSync(absSource)) {
+          return { 
+            success: false, 
+            message: `No encontré el archivo: ${absSource}` 
+          };
+        }
+
+        try {
+          // If destination is a directory, keep original filename
+          const destStat = await stat(absDest).catch(() => null);
+          if (destStat && destStat.isDirectory()) {
+            absDest = join(absDest, basename(absSource));
+          }
+
+          // Create destination directory if needed
+          await mkdir(dirname(absDest), { recursive: true });
+
+          // Move the file
+          await rename(absSource, absDest);
+
+          return { 
+            success: true, 
+            message: `Moví ${basename(absSource)} a ${absDest}` 
+          };
+        } catch (error) {
+          return {
+            success: false,
+            message: `No pude mover el archivo: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+            error: String(error)
+          };
+        }
+      }
+
+      case 'search_folder': {
+        const query = String(params.query ?? params.folderName ?? '');
+        const isLinux = process.platform === 'linux';
+        const searchPath = String(params.path ?? (isLinux ? '/home' : 'C:\\Users'));
+
+        if (!query) {
+          return { 
+            success: false, 
+            message: 'Indicame qué carpeta buscar' 
+          };
+        }
+
+        const { execSync } = await import('child_process');
+        const isWindows = process.platform === 'win32';
+
+        try {
+          const cmd = isWindows
+            ? `dir /s /b /ad "${searchPath}\\*${query}*" 2>nul`
+            : `find "${searchPath}" -maxdepth 5 -type d -iname "*${query}*" 2>/dev/null | head -10`;
+
+          const result = execSync(cmd, { encoding: 'utf-8', timeout: 10000 }).trim();
+          const folders = result.split('\n').filter(Boolean).slice(0, 10);
+
+          if (folders.length === 0) {
+            return { 
+              success: true, 
+              message: `No encontré carpetas con el nombre "${query}"` 
+            };
+          }
+
+          return {
+            success: true,
+            message: `Encontré ${folders.length} carpeta(s) con "${query}":\n${folders.join('\n')}`,
+            data: { folders }
+          };
+        } catch {
+          return { 
+            success: false, 
+            message: `No pude buscar la carpeta "${query}"` 
+          };
+        }
+      }
+
+      case 'find_and_open': {
+        const fileName = String(params.fileName ?? params.query ?? '');
+        const searchPath = String(params.path ?? (process.platform === 'win32' ? 'C:\\Users' : '/home/' + (process.env.USER || 'user')));
+
+        if (!fileName) {
+          return { success: false, message: 'Indicame el nombre del archivo a buscar' };
+        }
+
+        const { execSync } = await import('child_process');
+        const isWin = process.platform === 'win32';
+
+        try {
+          const cmd = isWin
+            ? `dir /s /b "${searchPath}\\*${fileName}*" 2>nul`
+            : `find "${searchPath}" -maxdepth 6 -iname "*${fileName}*" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -5`;
+
+          const result = execSync(cmd, { encoding: 'utf-8', timeout: 10000 }).trim();
+          const files = result.split('\n').filter(Boolean).slice(0, 5);
+
+          if (files.length === 0) {
+            return { success: false, message: `No encontré ningún archivo con el nombre "${fileName}"` };
+          }
+
+          if (files.length === 1) {
+            // Open directly
+            await osOpenFile(files[0]);
+            return { success: true, message: `Encontré y abrí: ${files[0]}` };
+          }
+
+          // Multiple results — open the first and list others
+          await osOpenFile(files[0]);
+          return {
+            success: true,
+            message: `Encontré ${files.length} archivos. Abrí el primero: ${files[0]}\nOtros encontrados:\n${files.slice(1).join('\n')}`,
+            data: { files }
+          };
+        } catch {
+          return { success: false, message: `Error buscando "${fileName}"` };
+        }
       }
 
       default:

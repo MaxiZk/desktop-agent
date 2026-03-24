@@ -10,7 +10,7 @@
 import { askClaude } from '../../ai/claude_ai.js';
 import { generateAIResponse } from '../../ai/ollama_ai.js';
 import { ContextBuilder } from '../../core/context/ContextBuilder.js';
-import type { Skill, SkillResult } from '../Skill.js';
+import type { SkillResult } from '../Skill.js';
 import type { SkillRegistry } from '../SkillRegistry.js';
 
 interface OllamaActionResponse {
@@ -55,13 +55,17 @@ function isPlaceholder(text: string): boolean {
  * @param registry - The skill registry to access available skills
  * @param contextBuilder - Optional ContextBuilder for enriched prompts
  * @param conversationHistory - Optional conversation history for context
+ * @param fileContext - Optional file context for conversational editing
+ * @param prefsContext - Optional user preferences context
  * @returns Promise<SkillResult> - Result with AI's response or skill execution
  */
 export async function handleFreeForm(
   userMessage: string,
   registry: SkillRegistry,
   contextBuilder?: ContextBuilder,
-  conversationHistory?: ConversationMessage[]
+  conversationHistory?: ConversationMessage[],
+  fileContext?: { filePath: string; fileType: string },
+  prefsContext?: string
 ): Promise<SkillResult> {
   const startTime = Date.now();
 
@@ -86,6 +90,28 @@ export async function handleFreeForm(
       }
     }
 
+    // Add file context if provided
+    let fileContextInfo = '';
+    let fileContextPath = '';
+    if (fileContext) {
+      fileContextPath = fileContext.filePath;
+      fileContextInfo = `
+⚠️ ARCHIVO ACTIVO: ${fileContext.filePath}
+
+INSTRUCCIÓN OBLIGATORIA: El usuario está trabajando con este archivo.
+Si pide agregar, modificar, abrir, revisar o hacer CUALQUIER acción
+sobre este archivo, DEBES retornar type "action", NO type "chat".
+NUNCA respondas con chat cuando hay un archivo activo y el usuario
+pide hacer algo con él.
+`;
+      contextInfo += fileContextInfo;
+    }
+
+    // Add user preferences context if provided
+    if (prefsContext) {
+      contextInfo += `\n${prefsContext}\n`;
+    }
+
     // Format conversation history
     let historyText = '';
     if (conversationHistory && conversationHistory.length > 0) {
@@ -95,39 +121,100 @@ export async function handleFreeForm(
         ).join('\n') + '\n';
     }
 
-    // Build list of available skills
-    const availableSkills = registry.getAll()
-      .map((s: Skill) => `${s.name}: ${s.supportedIntents.join(', ')}`)
-      .join('\n');
+    // Build list of available skills with detailed descriptions
+    const skillDescriptions = `
+Skills disponibles (para acciones en la PC):
+- open_app: abrir aplicaciones - params: { appName }
+- open_url: abrir URL o sitio web - params: { url }
+- close_app: cerrar aplicación - params: { appName }
+- focus_app: enfocar aplicación - params: { appName }
+- minimize_app: minimizar aplicación - params: { appName }
+- list_running_apps: listar apps en ejecución - no params
+- search_files: buscar archivos por nombre - params: { query }
+- move_file: mover o cortar/pegar archivo - params: { source, destination }
+- search_folder: buscar carpeta por nombre - params: { query }
+- read_file: leer contenido de archivo - params: { filePath }
+- open_file: abrir archivo con programa predeterminado - params: { filePath }
+- open_folder: abrir carpeta en explorador - params: { filePath }
+- analyze_csv: analizar archivo CSV - params: { filePath }
+- file_create: crear Excel/Word/TXT - params: { filePath }
+- excel_edit: abrir Excel conversacionalmente - params: { filePath }
+- txt_edit: abrir TXT conversacionalmente - params: { filePath }
+- word_edit: abrir Word conversacionalmente - params: { filePath }
+- excel_read: leer Excel - params: { filePath }
+- excel_create: crear Excel - params: { filePath, data, headers }
+- excel_append_row: agregar fila a Excel - params: { filePath, content }
+- text_append: agregar texto al final - params: { filePath, content }
+- text_prepend: agregar texto al principio - params: { filePath, content }
+- text_replace: reemplazar texto - params: { filePath, search, replacement }
+- text_delete: eliminar línea - params: { filePath, phrase }
+- system_lock: bloquear PC - no params
+- system_shutdown: apagar PC - no params (requiere confirmación)
+- system_restart: reiniciar PC - no params (requiere confirmación)
+- system_sleep: suspender PC - no params
+- clear_history: limpiar historial de conversación - no params
+`;
+
+    // Detect language for explicit instruction - improved scoring
+    const spanishScore = (userMessage.match(/\b(el|la|los|las|que|por|para|con|es|son|podes|podés|hola|soy|me|mi|tu|le|se|del|al|un|una|pero|esto|ese|eso|también|tambien|ahora|después|despues|cuando|como|donde|qué|que)\b/gi) || []).length;
+    const englishScore = (userMessage.match(/\b(the|is|are|was|were|have|has|can|could|would|should|will|this|that|these|those|and|but|for|with|from|your|you|open|close|add|create|show|find|please|help|me|my)\b/gi) || []).length;
+    const isSpanish = spanishScore >= englishScore;
+    const langInstruction = isSpanish 
+      ? 'IMPORTANTE: El usuario escribió en español. Respondé SOLO en español rioplatense. NO respondas en inglés bajo ninguna circunstancia.'
+      : 'IMPORTANT: The user wrote in English. Respond ONLY in English. Do NOT respond in Spanish under any circumstance.';
 
     // Build prompt for AI
-    const prompt = `Analizá este mensaje y respondé SOLO con JSON válido:
+    const prompt = `${langInstruction}
+
+Analizá este mensaje y respondé SOLO con JSON válido:
 ${contextInfo}${historyText}
 Mensaje actual del usuario: "${userMessage}"
 
-Skills disponibles (para acciones en la PC):
-${availableSkills}
+${skillDescriptions}
+
+IDIOMA: Detectá el idioma del mensaje del usuario y respondé en ESE MISMO idioma.
+- Si el usuario escribe en español → respondé en español rioplatense
+- Si el usuario escribe en inglés → respondé en inglés
+- Si el usuario escribe en otro idioma → respondé en ese idioma
+SIEMPRE igualá el idioma del usuario.
+
+REGLA IMPORTANTE: Si el usuario pide modificar, llenar, editar,
+agregar o cambiar un archivo específico (Excel, TXT, Word),
+SIEMPRE respondé con type "action", NUNCA con type "chat".
+No digas que lo hiciste si no ejecutaste la acción.
+
+EJEMPLOS DE ACCIONES (usar ruta absoluta del archivo activo):
+${fileContextPath ? `Archivo activo: ${fileContextPath}` : ''}
+- "llenalo con autos" → {"type":"action","intent":"excel_append_row","params":{"filePath":"${fileContextPath || '/ruta/archivo.xlsx'}","rows":"Toyota Corolla,25000,12\\nFord Focus,18000,18\\nHonda Civic,22000,24"},"response":"Agregando modelos..."}
+- "agregá en columna A modelos..." → {"type":"action","intent":"excel_append_row","params":{"filePath":"${fileContextPath || '/ruta/archivo.xlsx'}","content":"Modelo A,Modelo B,Modelo C"},"response":"Agregando..."}
+- "escribí en el txt..." → {"type":"action","intent":"text_append","params":{"filePath":"${fileContextPath || '/ruta/archivo.txt'}","content":"texto a agregar"},"response":"Escribiendo..."}
 
 Si el usuario quiere ejecutar una acción de las skills disponibles, respondé:
 {
   "type": "action",
   "intent": "nombre_intent",
   "params": { "clave": "valor" },
-  "response": "respuesta natural en español"
+  "response": "respuesta natural en el idioma del usuario"
 }
 
 Si es conversación, pregunta o cualquier otra cosa, respondé:
 {
   "type": "chat",
-  "response": "tu respuesta en español, 2-3 oraciones"
+  "response": "tu respuesta en el idioma del usuario, 2-3 oraciones"
 }
 
 IMPORTANTE: Respondé ÚNICAMENTE con el JSON. Sin texto adicional.`;
 
-    // Try Claude first
-    const claudeResult = await askClaude(prompt, []);
+    // Try Claude first with 8-second timeout
+    const claudeResult = await Promise.race([
+      askClaude(prompt, []),
+      timeoutPromise(8000),
+    ]);
     
-    if (claudeResult.success && claudeResult.response) {
+    // Check if timeout occurred
+    if (claudeResult === 'TIMEOUT') {
+      console.log('[FreeForm] Claude timeout after 8s, falling back to Ollama');
+    } else if (claudeResult.success && claudeResult.response) {
       try {
         // Clean up response (remove markdown code blocks if present)
         const clean = claudeResult.response
@@ -135,38 +222,60 @@ IMPORTANTE: Respondé ÚNICAMENTE con el JSON. Sin texto adicional.`;
           .replace(/```\n?/g, '')
           .trim();
         
-        const parsed = JSON.parse(clean);
-        
-        // Handle action type
-        if (parsed.type === 'action' && parsed.intent && parsed.intent !== 'unknown') {
-          const skill = registry.resolve(parsed.intent);
-          if (skill) {
-            const result = await skill.execute({
-              rawCommand: userMessage,
-              intent: parsed.intent,
-              params: parsed.params ?? {},
-              confirmed: false,
-            });
-            
+        // Validate response is not empty or too short
+        if (clean.length < 10) {
+          console.log('[FreeForm] Claude response too short, retrying with simpler prompt');
+          
+          // Retry with simpler prompt
+          const simplePrompt = `Usuario: "${userMessage}"\n\nDetectá el idioma del usuario y respondé en ese mismo idioma. Máximo 3 oraciones.`;
+          const retryResult = await Promise.race([
+            askClaude(simplePrompt, []),
+            timeoutPromise(5000),
+          ]);
+          
+          if (retryResult !== 'TIMEOUT' && retryResult.success && retryResult.response && retryResult.response.length >= 10) {
             const elapsed = Date.now() - startTime;
-            console.log(`[FreeForm] Claude action processed in ${elapsed}ms - Intent: ${parsed.intent}`);
+            console.log(`[FreeForm] Claude retry processed in ${elapsed}ms`);
             
             return {
-              ...result,
-              message: parsed.response ?? result.message,
+              success: true,
+              message: retryResult.response,
             };
           }
-        }
-        
-        // Handle chat type
-        if (parsed.type === 'chat' && parsed.response) {
-          const elapsed = Date.now() - startTime;
-          console.log(`[FreeForm] Claude chat processed in ${elapsed}ms`);
+        } else {
+          const parsed = JSON.parse(clean);
           
-          return {
-            success: true,
-            message: parsed.response,
-          };
+          // Handle action type
+          if (parsed.type === 'action' && parsed.intent && parsed.intent !== 'unknown') {
+            const skill = registry.resolve(parsed.intent);
+            if (skill) {
+              const result = await skill.execute({
+                rawCommand: userMessage,
+                intent: parsed.intent,
+                params: parsed.params ?? {},
+                confirmed: false,
+              });
+              
+              const elapsed = Date.now() - startTime;
+              console.log(`[FreeForm] Claude action processed in ${elapsed}ms - Intent: ${parsed.intent}`);
+              
+              return {
+                ...result,
+                message: parsed.response ?? result.message,
+              };
+            }
+          }
+          
+          // Handle chat type
+          if (parsed.type === 'chat' && parsed.response && parsed.response.length >= 10) {
+            const elapsed = Date.now() - startTime;
+            console.log(`[FreeForm] Claude chat processed in ${elapsed}ms`);
+            
+            return {
+              success: true,
+              message: parsed.response,
+            };
+          }
         }
       } catch (parseError) {
         console.log('[FreeForm] Claude JSON parse error, falling back to Ollama');
@@ -176,12 +285,28 @@ IMPORTANTE: Respondé ÚNICAMENTE con el JSON. Sin texto adicional.`;
     }
 
     // Fallback to Ollama
-    const ollamaPrompt = `Soy tu asistente virtual, un asistente de escritorio inteligente.
+    const spanishScoreOllama = (userMessage.match(/\b(el|la|los|las|que|por|para|con|es|son|podes|podés|hola|soy|me|mi|tu|le|se|del|al|un|una|pero|esto|ese|eso|también|tambien|ahora|después|despues|cuando|como|donde|qué|que)\b/gi) || []).length;
+    const englishScoreOllama = (userMessage.match(/\b(the|is|are|was|were|have|has|can|could|would|should|will|this|that|these|those|and|but|for|with|from|your|you|open|close|add|create|show|find|please|help|me|my)\b/gi) || []).length;
+    const isSpanishOllama = spanishScoreOllama >= englishScoreOllama;
+    const langInstructionOllama = isSpanishOllama 
+      ? 'IMPORTANTE: El usuario escribió en español. Respondé SOLO en español rioplatense. NO respondas en inglés bajo ninguna circunstancia.'
+      : 'IMPORTANT: The user wrote in English. Respond ONLY in English. Do NOT respond in Spanish under any circumstance.';
+    
+    const detectedLang = isSpanishOllama ? 'español rioplatense' : 'English';
+    
+    const ollamaPrompt = `${langInstructionOllama}
+
+Soy tu asistente virtual, un asistente de escritorio inteligente.
 ${contextInfo}${historyText}
-Tenés acceso a estas skills:
-${availableSkills}
+${skillDescriptions}
 
 El usuario escribió: "${userMessage}"
+
+IDIOMA: Detectá el idioma del mensaje del usuario y respondé en ESE MISMO idioma.
+- Si el usuario escribe en español → respondé en español rioplatense
+- Si el usuario escribe en inglés → respondé en inglés
+- Si el usuario escribe en otro idioma → respondé en ese idioma
+Respondé en ${detectedLang}.
 
 Analizá si el usuario quiere ejecutar una acción o solo conversar.
 
@@ -190,13 +315,13 @@ Si quiere ejecutar una acción, respondé SOLO con este JSON:
   "type": "action",
   "intent": "nombre_del_intent",
   "params": { "clave": "valor" },
-  "response": "respuesta conversacional en español"
+  "response": "respuesta conversacional en el idioma del usuario"
 }
 
 Si es conversación, respondé SOLO con este JSON:
 {
   "type": "chat",
-  "response": "tu respuesta en español, máximo 3 oraciones"
+  "response": "tu respuesta en el idioma del usuario, máximo 3 oraciones"
 }
 
 Respondé ÚNICAMENTE con el JSON, sin texto adicional.`;

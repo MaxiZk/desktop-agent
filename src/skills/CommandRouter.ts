@@ -75,11 +75,24 @@ const RULES: IntentRule[] = [
   {
     intent: 'open_file',
     patterns: [
-      /^(?:abrí?|abrir?|open)\s+archivo\s+(.+)$/i,
+      /^(?:abrí?|abrir?|open)\s+archivo\s+((?:[\/\\]|[A-Za-z]:\\).+|\S+\.\w+.*)$/i,
       /^(?:abrí?|abrir?|open)\s+([A-Za-z]:\\.+)$/i,
       /^([A-Za-z]:\\.+\.\w+)$/i,
     ],
     extractParams: (_text, match) => ({ filePath: match[1]?.trim() }),
+  },
+
+  // --- Find and open file by name (before other file operations) ---
+  {
+    intent: 'find_and_open',
+    patterns: [
+      /(?:buscá?|buscar?|encontrá?|find)\s+(?:el\s+|la\s+|un\s+|una\s+)?(?:archivo\s+)?(.+?)\s+y\s+abri[rl]lo(?:\s+en\s+(.+))?$/i,
+      /(?:abrí?|abrir?|open)\s+(?:el\s+)?archivo\s+([^\/\\]+?)(?:\s+en\s+(.+))?$/i,
+    ],
+    extractParams: (_text, match) => ({
+      fileName: match[1]?.trim().replace(/\s+y\s+abrilo?$/i, '').trim(),
+      path: match[2]?.trim(),
+    }),
   },
 
   // --- Excel / CSV (más específicos primero) ---
@@ -175,6 +188,28 @@ const RULES: IntentRule[] = [
 
   // --- Edición de texto ---
   {
+    intent: 'word_append',
+    patterns: [
+      /(?:agregá|agregar?|add|escribí|escribir?|añadí|añadir?)\s+(?:al?\s+)?(?:final\s+de\s+|end\s+of\s+)(.+\.docx?):\s*(.+)/i,
+      /(?:agregá|agregar?|add)\s+(?:en|in|a)\s+(.+\.docx?):\s*(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      filePath: match[1].trim(),
+      content: match[2].trim(),
+    }),
+  },
+  {
+    intent: 'word_replace',
+    patterns: [
+      /(?:reemplazá|reemplazar?|replace|cambiá|cambiar?)\s+"(.+?)"\s+(?:por|with|con)\s+"(.+?)"\s+(?:de|from|en|in)\s+(.+\.docx?)/i,
+    ],
+    extractParams: (_text, match) => ({
+      search: match[1].trim(),
+      replacement: match[2].trim(),
+      filePath: match[3].trim(),
+    }),
+  },
+  {
     intent: 'text_append',
     patterns: [
       /(?:agregá|agregar?|add|escribí|escribir?|añadí|añadir?)\s+(?:al?\s+)?(?:final\s+de\s+|end\s+of\s+)(.+?):\s*(.+)/i,
@@ -258,6 +293,26 @@ const RULES: IntentRule[] = [
     extractParams: (_text, match) => ({ query: match[1].trim() }),
   },
   {
+    intent: 'move_file',
+    patterns: [
+      /(?:mové?|mover?|move|trasladá?|trasladar?|cortá?\s+y\s+pegá?)\s+(.+?)\s+(?:a|to|hacia)\s+(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      source: match[1]?.trim(),
+      destination: match[2]?.trim(),
+    }),
+  },
+  {
+    intent: 'search_folder',
+    patterns: [
+      /(?:buscá?|buscar?|search|encontrá?|encontrar?|find)\s+(?:la\s+)?(?:carpeta|folder|directorio|directory)\s+(.+)/i,
+      /(?:d[oó]nde\s+está?|where\s+is)\s+(?:la\s+)?(?:carpeta|folder)\s+(.+)/i,
+    ],
+    extractParams: (_text, match) => ({
+      query: match[1]?.trim(),
+    }),
+  },
+  {
     intent: 'open_folder',
     patterns: [
       /abr[ií]\s+(?:la\s+)?carpeta\s+(?:de\s+)?(.+)/i,
@@ -294,6 +349,13 @@ const RULES: IntentRule[] = [
     extractParams: (_text, match) => ({ url: match[1]?.trim() }),
   },
   {
+    intent: 'open_app',
+    patterns: [
+      /(?:jug[aá]?|jugar?|play|lanz[aá]?|lanzar?)\s+(?:al?\s+)?(.+)/i,
+    ],
+    extractParams: (_text, match) => ({ appName: match[1].trim() }),
+  },
+  {
     intent: 'list_running_apps',
     patterns: [
       /list(?:ar?)?\s+(?:running\s+)?apps?/i,
@@ -307,8 +369,7 @@ const RULES: IntentRule[] = [
     patterns: [
       /enfoc[aá]\s+(?!archivo\s)(.+)/i,
       /focus\s+(?!archivo\s)(.+)/i,
-      /cambi[aá]\s+a\s+(?!archivo\s)(.+)/i,
-      /switch\s+to\s+(?!archivo\s)(.+)/i,
+      /(?:tra[eé]|traer?|bring)\s+(?:la?\s+ventana\s+de\s+)?(.+)/i,
     ],
     extractParams: (_text, match) => ({ appName: match[1].trim() }),
   },

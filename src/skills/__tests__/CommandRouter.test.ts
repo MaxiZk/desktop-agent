@@ -121,8 +121,8 @@ describe('CommandRouter', () => {
       expect(result.params.appName).toBe('chrome');
     });
 
-    it('should detect "cambiá a discord" (español)', () => {
-      const result = parseCommand('cambiá a discord');
+    it('should detect "enfocá discord" (español)', () => {
+      const result = parseCommand('enfocá discord');
       expect(result.intent).toBe('focus_app');
       expect(result.params.appName).toBe('discord');
     });

@@ -1,6 +1,11 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, nativeImage } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
+const http = require("http");
+
+// Enable Web Speech API for voice input
+app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI');
+app.commandLine.appendSwitch('lang', 'es-AR');
 
 let mainWindow = null;
 let tray = null;
@@ -10,6 +15,12 @@ let ollamaProcess = null;
 let isQuitting = false;
 
 const iconPath = path.join(__dirname, "icon.ico");
+
+// Keyboard shortcuts configuration
+const shortcuts = {
+  newChat: 'CommandOrControl+N',
+  voiceInput: 'CommandOrControl+Shift+V',
+};
 
 // Platform detection helper
 function isWindows() {
@@ -73,7 +84,56 @@ function stopOllama() {
   }
 }
 
-function createWindow() {
+/**
+ * Wait for Vite dev server to be ready by retrying HTTP requests
+ * @param {number} timeoutMs - Maximum time to wait in milliseconds (default: 30000)
+ * @returns {Promise<boolean>} - true if Vite responds, false if timeout is reached
+ */
+function waitForVite(timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const retryInterval = 500; // Check every 500ms
+    let attemptCount = 0;
+
+    console.log('[Vite] Waiting for dev server to be ready...');
+
+    const checkVite = () => {
+      attemptCount++;
+      const elapsed = Date.now() - startTime;
+
+      if (elapsed >= timeoutMs) {
+        console.log(`[Vite] Timeout reached after ${attemptCount} attempts (${elapsed}ms)`);
+        resolve(false);
+        return;
+      }
+
+      const req = http.get('http://localhost:5173', (res) => {
+        console.log(`[Vite] Dev server ready after ${attemptCount} attempts (${elapsed}ms)`);
+        resolve(true);
+      });
+
+      req.on('error', (err) => {
+        if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
+          console.log(`[Vite] Attempt ${attemptCount}: Connection refused, retrying...`);
+          setTimeout(checkVite, retryInterval);
+        } else {
+          console.error(`[Vite] Unexpected error:`, err.message);
+          setTimeout(checkVite, retryInterval);
+        }
+      });
+
+      req.setTimeout(2000, () => {
+        req.destroy();
+        console.log(`[Vite] Attempt ${attemptCount}: Request timeout, retrying...`);
+        setTimeout(checkVite, retryInterval);
+      });
+    };
+
+    checkVite();
+  });
+}
+
+async function createWindow() {
   // Use platform-appropriate icon
   let windowIcon;
   if (isWindows()) {
@@ -95,11 +155,20 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL("http://localhost:5173");
+  // Wait for Vite dev server to be ready before loading
+  const viteReady = await waitForVite();
+  
+  if (viteReady) {
+    console.log('[Window] Loading Vite dev server at http://localhost:5173');
+    mainWindow.loadURL("http://localhost:5173");
+  } else {
+    console.log('[Window] Vite unavailable, falling back to production build');
+    const distPath = path.join(__dirname, '..', 'dist', 'index.html');
+    mainWindow.loadFile(distPath);
+  }
 
   mainWindow.once("ready-to-show", () => {
-    // Start minimized to tray - don't show on first launch
-    // User can open via tray click or Ctrl+Space
+    mainWindow.show();
   });
 
   mainWindow.on("minimize", (event) => {
@@ -219,13 +288,13 @@ function startProcesses() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
     // Start Ollama first
     startOllama();
     
     startProcesses();
-    createWindow();
+    await createWindow();
     createTray();
 
     // Set to start with system
@@ -246,6 +315,9 @@ app.whenReady().then(() => {
       }
     });
 
+    // Register keyboard shortcuts
+    registerShortcuts();
+
     // Check Ollama status after 3 seconds and notify renderer
     setTimeout(async () => {
       const running = await isOllamaRunning();
@@ -259,6 +331,26 @@ app.whenReady().then(() => {
     console.error("Error starting Electron app:", error);
   }
 });
+
+function registerShortcuts() {
+  // Ctrl+N: New chat (clear history)
+  globalShortcut.register(shortcuts.newChat, () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[Shortcut] New chat triggered');
+      mainWindow.webContents.send('shortcut-new-chat');
+    }
+  });
+
+  // Ctrl+Shift+V: Voice input
+  globalShortcut.register(shortcuts.voiceInput, () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[Shortcut] Voice input triggered');
+      mainWindow.webContents.send('shortcut-voice-input');
+    }
+  });
+
+  console.log('[Shortcuts] Registered:', shortcuts);
+}
 
 app.on("will-quit", () => {
   // Stop Ollama
@@ -280,5 +372,141 @@ app.on("activate", () => {
   if (mainWindow) {
     mainWindow.show();
     mainWindow.focus();
+  }
+});
+
+// ── IPC Handlers ────────────────────────────────────────────────────────────
+
+// Text-to-Speech handler with improved voice support
+ipcMain.handle('speak', async (event, text) => {
+  if (!text || typeof text !== 'string') {
+    console.error('[TTS] Invalid text provided');
+    return { success: false, error: 'Invalid text' };
+  }
+
+  console.log(`[TTS] Speaking: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+
+  try {
+    if (isWindows()) {
+      // Windows: Use PowerShell TTS
+      const { spawn } = require('child_process');
+      const psCommand = `Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak('${text.replace(/'/g, "''")}')`;
+      
+      const ps = spawn('powershell.exe', ['-Command', psCommand], {
+        windowsHide: true,
+      });
+
+      return new Promise((resolve) => {
+        ps.on('close', (code) => {
+          if (code === 0) {
+            console.log('[TTS] Speech completed successfully');
+            resolve({ success: true });
+          } else {
+            console.error(`[TTS] PowerShell exited with code ${code}`);
+            resolve({ success: false, error: `Exit code ${code}` });
+          }
+        });
+
+        ps.on('error', (err) => {
+          console.error('[TTS] PowerShell error:', err);
+          resolve({ success: false, error: err.message });
+        });
+      });
+    } else {
+      // Linux: Try espeak-ng, then espeak, then festival
+      const { spawn } = require('child_process');
+      
+      // Detect available TTS engine
+      const detectEngine = () => {
+        try {
+          execSync('which espeak-ng', { stdio: 'ignore' });
+          console.log('[TTS] Using espeak-ng');
+          return 'espeak-ng';
+        } catch {
+          try {
+            execSync('which espeak', { stdio: 'ignore' });
+            console.log('[TTS] Using espeak');
+            return 'espeak';
+          } catch {
+            try {
+              execSync('which festival', { stdio: 'ignore' });
+              console.log('[TTS] Using festival');
+              return 'festival';
+            } catch {
+              console.error('[TTS] No TTS engine found (espeak-ng, espeak, or festival)');
+              return null;
+            }
+          }
+        }
+      };
+
+      const engine = detectEngine();
+      
+      if (!engine) {
+        return { success: false, error: 'No TTS engine available' };
+      }
+
+      let ttsProcess;
+      if (engine === 'espeak-ng' || engine === 'espeak') {
+        ttsProcess = spawn(engine, ['-v', 'es', text], {
+          stdio: 'ignore',
+        });
+      } else if (engine === 'festival') {
+        ttsProcess = spawn('festival', ['--tts'], {
+          stdio: ['pipe', 'ignore', 'ignore'],
+        });
+        ttsProcess.stdin.write(text);
+        ttsProcess.stdin.end();
+      }
+
+      return new Promise((resolve) => {
+        ttsProcess.on('close', (code) => {
+          if (code === 0) {
+            console.log('[TTS] Speech completed successfully');
+            resolve({ success: true });
+          } else {
+            console.error(`[TTS] ${engine} exited with code ${code}`);
+            resolve({ success: false, error: `Exit code ${code}` });
+          }
+        });
+
+        ttsProcess.on('error', (err) => {
+          console.error(`[TTS] ${engine} error:`, err);
+          resolve({ success: false, error: err.message });
+        });
+      });
+    }
+  } catch (error) {
+    console.error('[TTS] Exception:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Stop TTS handler
+ipcMain.handle('speak-stop', async () => {
+  console.log('[TTS] Stop requested');
+  
+  try {
+    if (isWindows()) {
+      // Kill any running PowerShell TTS processes
+      execSync('taskkill /F /IM powershell.exe /FI "WINDOWTITLE eq *Speech*" 2>nul', { stdio: 'ignore' });
+    } else {
+      // Kill espeak/festival processes
+      try {
+        execSync('pkill -9 espeak-ng', { stdio: 'ignore' });
+      } catch {}
+      try {
+        execSync('pkill -9 espeak', { stdio: 'ignore' });
+      } catch {}
+      try {
+        execSync('pkill -9 festival', { stdio: 'ignore' });
+      } catch {}
+    }
+    
+    console.log('[TTS] Stopped successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('[TTS] Stop error:', error);
+    return { success: false, error: error.message };
   }
 });

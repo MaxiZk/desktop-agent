@@ -73,6 +73,12 @@ import {
   saveSessionMessage,
   clearSessionHistory
 } from '../src/memory/session_memory.js';
+import {
+  loadPreferences,
+  savePreferences,
+  updatePreference,
+  type UserPreferences
+} from '../src/memory/user_preferences.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -878,6 +884,61 @@ app.get('/api/session/history', async (req: Request, res: Response) => {
   }
 });
 
+// User Preferences endpoints
+app.get('/api/preferences', async (req: Request, res: Response) => {
+  try {
+    console.log(`📋 [Preferences] Loading user preferences`);
+    
+    const prefs = await loadPreferences();
+    
+    console.log(`✅ [Preferences] Loaded preferences`);
+    
+    res.json({
+      success: true,
+      preferences: prefs
+    });
+  } catch (error) {
+    console.error(`❌ [Preferences] Error loading:`, error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+app.post('/api/preferences', async (req: Request, res: Response) => {
+  try {
+    const { key, value } = req.body;
+    
+    if (!key || typeof key !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: 'key is required'
+      });
+      return;
+    }
+    
+    console.log(`💾 [Preferences] Updating preference: ${key} = ${value}`);
+    
+    const updatedPrefs = await updatePreference(key, value);
+    userPreferences = updatedPrefs; // Update in-memory cache
+    
+    console.log(`✅ [Preferences] Preference updated`);
+    
+    res.json({
+      success: true,
+      message: `Preferencia guardada: ${key}`,
+      preferences: updatedPrefs
+    });
+  } catch (error) {
+    console.error(`❌ [Preferences] Error updating:`, error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 app.post('/api/session/history', async (req: Request, res: Response) => {
   try {
     const { role, content, timestamp } = req.body;
@@ -1187,11 +1248,21 @@ let securityGuard: SecurityGuard;
   console.log('[SecurityGuard] Initialized with allowlist');
 })();
 
+// Load user preferences at startup
+let userPreferences: UserPreferences = {};
+(async () => {
+  userPreferences = await loadPreferences();
+  console.log(`[Preferences] Loaded user preferences: userName=${userPreferences.userName}`);
+})();
+
+// Pending file context for conversational editing (30 minutes TTL)
+let pendingFileContext: { filePath: string; fileType: string; timestamp: number } | null = null;
+
 // ── Endpoint unificado ────────────────────────────────────────────────────────
 
 app.post('/api/command', async (req: Request, res: Response) => {
   const startTime = Date.now();
-  const { text, confirmed } = req.body;
+  let { text, confirmed } = req.body;
 
   // ── Validar input ───────────────────────────────────────────────────────────
   if (!text || typeof text !== 'string') {
@@ -1203,10 +1274,46 @@ app.post('/api/command', async (req: Request, res: Response) => {
 
   console.log(`💬 [Command] Input: "${text}"`);
 
+  // ── Split compound commands ─────────────────────────────────────────────────
+  // Handle commands like "recordá X, buscá Y" by processing only the first part
+  const commandParts = text.split(/,\s*(?=(?:buscá?|abri[rl]?|cerrá?|creá?|moví?|guardá?|recordá?|leé?|eliminá?|reemplazá?))/i);
+  let hasMoreCommands = false;
+  
+  if (commandParts.length > 1) {
+    console.log(`📋 [Command] Compound command detected: ${commandParts.length} parts`);
+    text = commandParts[0].trim();
+    hasMoreCommands = true;
+  }
+
   // ── Parsear intención ───────────────────────────────────────────────────────
-  const parsed = parseCommand(text);
-  const context = buildContext(text, confirmed ?? false);
+  let parsed = parseCommand(text);
+  let context = buildContext(text, confirmed ?? false);
+  
+  // Debug logging
+  console.log('[Command] text:', text, '| intent:', context.intent);
+  console.log('[Command] isEditCommand:', /(?:agregá?|agregar?|añadí?|add|insertá?|ponele|poné|llenalo|completalo)/i.test(text));
+  console.log('[Command] hasExcelContext:', !!pendingFileContext, pendingFileContext?.filePath);
+  
   console.log(`🧠 [Command] Intent: ${context.intent} (params: ${JSON.stringify(context.params)}) [method: ${parsed.method}]`);
+
+  // ── Re-inject file context if intent is unknown ────────────────────────────
+  // If we have a pending file context and the intent is unknown, try to enrich the command
+  if (pendingFileContext && Date.now() - pendingFileContext.timestamp < 1800000 && context.intent === 'unknown') {
+    console.log(`📝 [Command] Re-injecting file context: ${pendingFileContext.filePath}`);
+    const enrichedText = `${text} (archivo: ${pendingFileContext.filePath})`;
+    const enrichedContext = buildContext(enrichedText, confirmed ?? false);
+    
+    if (enrichedContext.intent !== 'unknown') {
+      console.log(`✅ [Command] File context resolved intent: ${enrichedContext.intent}`);
+      context = enrichedContext;
+      parsed = parseCommand(enrichedText);
+    }
+  }
+
+  // Log excel_append_row params for debugging
+  if (context.intent === 'excel_append_row') {
+    console.log('[Excel] append_row params:', JSON.stringify(context.params));
+  }
 
   // ── Protección contra duplicados ───────────────────────────────────────────
   // Build request key from intent + main param
@@ -1238,6 +1345,270 @@ app.post('/api/command', async (req: Request, res: Response) => {
     }, 1500);
   };
 
+  // ── Excel Debug Logging ─────────────────────────────────────────────────────
+  console.log('=== EXCEL DEBUG ===');
+  console.log('text:', text);
+  console.log('isEditCommand:', /(?:agregá?|agregar?|añadí?|add|insertá?|ponele|poné|llenalo|completalo)/i.test(text));
+  console.log('hasExcelContext check 1 (pendingFileContext):', !!pendingFileContext?.filePath, pendingFileContext?.filePath);
+  console.log('hasExcelContext check 2 (xlsx in text):', /\.xlsx?/i.test(text));
+  console.log('hasExcelContext check 3 (ventas/excel/planilla):', /\bventas\b|\bexcel\b|\bplanilla\b/i.test(text));
+  console.log('context.intent:', context.intent);
+  console.log('=== END DEBUG ===');
+
+  // ── Direct Excel edit detection ────────────────────────────────────────────
+  // Handle direct Excel editing commands before falling back to free-form
+  const editWords = ['agreg', 'añad', 'insert', 'ponele', 'ponerle', 'llena', 'completa', 'escrib', 'agrega', 'add', 'append'];
+  const normalizedText = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const isEditCommand = editWords.some(w => normalizedText.includes(w));
+  const hasExcelContext = !!pendingFileContext?.filePath ||
+    /\.xlsx?/i.test(text) ||
+    /\bventas\b|\bexcel\b|\bplanilla\b/i.test(text);
+  
+  if (isEditCommand && hasExcelContext && context.intent === 'unknown') {
+    let filePath = pendingFileContext?.filePath ?? 
+      text.match(/([\w\/\\]+\.xlsx?)/i)?.[1] ?? 
+      text.match(/(?:archivo|file)\s+(\w+)/i)?.[1] ?? '';
+    
+    // Normalize path (replace backslashes with forward slashes)
+    filePath = filePath.replace(/\\/g, '/');
+    
+    // If filePath is just a name without path, search for it
+    if (filePath && !filePath.includes('/') && !filePath.endsWith('.xlsx')) {
+      console.log(`📊 [Excel Direct] Searching for file: ${filePath}`);
+      try {
+        const { execSync } = await import('child_process');
+        const found = execSync(
+          `find /home -name "*${filePath}*.xlsx" -maxdepth 5 2>/dev/null | head -1`,
+          { encoding: 'utf-8' }
+        ).trim();
+        if (found) {
+          filePath = found;
+          console.log(`📊 [Excel Direct] Found file: ${filePath}`);
+        }
+      } catch (error) {
+        console.log(`📊 [Excel Direct] File search failed:`, error);
+      }
+    }
+    
+    if (filePath) {
+      console.log(`📊 [Excel Direct] Detected Excel edit command for: ${filePath}`);
+      
+      try {
+        const { askClaude } = await import('../src/ai/claude_ai.js');
+        
+        const dataResult = await askClaude(
+          `Generate CSV rows for Excel based on this request: "${text}"
+
+Return ONLY raw CSV data, no explanations, no headers if not requested.
+One row per line. Max 10 rows. Example:
+Toyota Corolla,25000,12 cuotas
+Ford Focus,18000,18 cuotas`,
+          []
+        );
+        
+        if (dataResult.success && dataResult.response) {
+          const rows = dataResult.response
+            .split('\n')
+            .map((r: string) => r.trim())
+            .filter((r: string) => r && !r.startsWith('//') && !r.startsWith('#'))
+            .join('\n');
+          
+          const skill = registry.resolve('excel_append_row');
+          
+          if (skill && rows) {
+            console.log(`📊 [Excel Direct] Generated ${rows.split('\n').length} rows`);
+            
+            const skillResult = await skill.execute({
+              rawCommand: text,
+              intent: 'excel_append_row',
+              params: { filePath, rows },
+              confirmed: false
+            });
+            
+            // Save to session history
+            await saveSessionMessage({ 
+              role: 'user', 
+              content: text, 
+              timestamp: new Date().toISOString() 
+            });
+            await saveSessionMessage({ 
+              role: 'assistant', 
+              content: skillResult.message ?? '', 
+              timestamp: new Date().toISOString() 
+            });
+            
+            clearInFlight();
+            
+            console.log(`✅ [Excel Direct] Completed — ${Date.now() - startTime}ms`);
+            
+            return res.json({
+              ...skillResult,
+              meta: {
+                intent: 'excel_append_row',
+                skill: 'ExcelSkill',
+                confidence: 0.99,
+                executionTime: Date.now() - startTime,
+                method: 'direct'
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[Excel Direct] Error:', error);
+        // Fall through to normal processing
+      }
+    }
+  }
+
+  // ── Direct Word edit detection ─────────────────────────────────────────────
+  const isWordContext = pendingFileContext?.fileType === 'word' ||
+    /\.docx?/i.test(text) ||
+    /\bword\b|\bdocumento\b/i.test(text);
+  
+  if (isEditCommand && isWordContext && context.intent === 'unknown') {
+    let wordPath = pendingFileContext?.filePath ?? 
+      text.match(/([\w\/\\]+\.docx?)/i)?.[1] ?? '';
+    
+    // Normalize path (replace backslashes with forward slashes)
+    wordPath = wordPath.replace(/\\/g, '/');
+    
+    if (wordPath) {
+      console.log(`📝 [Word Direct] Detected Word edit command for: ${wordPath}`);
+      
+      try {
+        const { askClaude } = await import('../src/ai/claude_ai.js');
+        
+        const dataResult = await askClaude(
+          `Generate plain text content to add to a Word document.
+User request: "${text}"
+
+Return ONLY the content to add, no explanations.
+Use line breaks between items if it's a list.`,
+          []
+        );
+        
+        if (dataResult.success && dataResult.response) {
+          const skill = registry.resolve('word_append');
+          
+          if (skill) {
+            console.log(`📝 [Word Direct] Generated content`);
+            
+            const skillResult = await skill.execute({
+              rawCommand: text,
+              intent: 'word_append',
+              params: { filePath: wordPath, content: dataResult.response },
+              confirmed: false
+            });
+            
+            // Save to session history
+            await saveSessionMessage({ 
+              role: 'user', 
+              content: text, 
+              timestamp: new Date().toISOString() 
+            });
+            await saveSessionMessage({ 
+              role: 'assistant', 
+              content: skillResult.message ?? '', 
+              timestamp: new Date().toISOString() 
+            });
+            
+            clearInFlight();
+            
+            console.log(`✅ [Word Direct] Completed — ${Date.now() - startTime}ms`);
+            
+            return res.json({
+              ...skillResult,
+              meta: {
+                intent: 'word_append',
+                skill: 'TextEditSkill',
+                confidence: 0.99,
+                executionTime: Date.now() - startTime,
+                method: 'direct'
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[Word Direct] Error:', error);
+        // Fall through to normal processing
+      }
+    }
+  }
+
+  // ── Direct TXT edit detection ──────────────────────────────────────────────
+  const isTxtContext = pendingFileContext?.fileType === 'txt' ||
+    /\.txt/i.test(text) ||
+    /\btxt\b|\btexto\b|\barchivo\s+de\s+texto\b/i.test(text);
+  
+  if (isEditCommand && isTxtContext && context.intent === 'unknown') {
+    let txtPath = pendingFileContext?.filePath ?? 
+      text.match(/([\w\/\\]+\.txt)/i)?.[1] ?? '';
+    
+    // Normalize path (replace backslashes with forward slashes)
+    txtPath = txtPath.replace(/\\/g, '/');
+    
+    if (txtPath) {
+      console.log(`📄 [TXT Direct] Detected TXT edit command for: ${txtPath}`);
+      
+      try {
+        const { askClaude } = await import('../src/ai/claude_ai.js');
+        
+        const dataResult = await askClaude(
+          `Generate text content to append to a text file.
+User request: "${text}"
+
+Return ONLY the content to add, no explanations.`,
+          []
+        );
+        
+        if (dataResult.success && dataResult.response) {
+          const skill = registry.resolve('text_append');
+          
+          if (skill) {
+            console.log(`📄 [TXT Direct] Generated content`);
+            
+            const skillResult = await skill.execute({
+              rawCommand: text,
+              intent: 'text_append',
+              params: { filePath: txtPath, content: dataResult.response },
+              confirmed: false
+            });
+            
+            // Save to session history
+            await saveSessionMessage({ 
+              role: 'user', 
+              content: text, 
+              timestamp: new Date().toISOString() 
+            });
+            await saveSessionMessage({ 
+              role: 'assistant', 
+              content: skillResult.message ?? '', 
+              timestamp: new Date().toISOString() 
+            });
+            
+            clearInFlight();
+            
+            console.log(`✅ [TXT Direct] Completed — ${Date.now() - startTime}ms`);
+            
+            return res.json({
+              ...skillResult,
+              meta: {
+                intent: 'text_append',
+                skill: 'TextEditSkill',
+                confidence: 0.99,
+                executionTime: Date.now() - startTime,
+                method: 'direct'
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[TXT Direct] Error:', error);
+        // Fall through to normal processing
+      }
+    }
+  }
+
   if (context.intent === 'unknown') {
     clearInFlight();
     
@@ -1256,7 +1627,20 @@ app.post('/api/command', async (req: Request, res: Response) => {
       
       console.log(`📜 [Command] Loaded ${conversationHistory.length} messages from session history`);
       
-      const freeFormResult = await handleFreeForm(text, registry, contextBuilder, conversationHistory);
+      // Include pending file context if available (30 minutes TTL)
+      const fileContext = pendingFileContext && Date.now() - pendingFileContext.timestamp < 1800000 ? 
+        {
+          filePath: pendingFileContext.filePath,
+          fileType: pendingFileContext.fileType
+        } : 
+        undefined;
+      
+      // Include user preferences context
+      const prefsContext = userPreferences.userName ? 
+        `Nombre del usuario: ${userPreferences.userName}` : 
+        undefined;
+      
+      const freeFormResult = await handleFreeForm(text, registry, contextBuilder, conversationHistory, fileContext, prefsContext);
       
       // Log to history
       await saveCommandToHistory({
@@ -1411,12 +1795,28 @@ app.post('/api/command', async (req: Request, res: Response) => {
   }
 
   // ── Ejecutar con SecurityGuard ──────────────────────────────────────────────
+  console.log(`[Server] Executing: ${context.intent}`, JSON.stringify(context.params));
   const result = await securityGuard.execute(skill, context);
+
+  // ── Set pending file context for conversational editing ────────────────────
+  if (result.success && ['excel_edit', 'word_edit', 'txt_edit'].includes(context.intent)) {
+    const filePath = String(context.params.filePath ?? '');
+    const fileType = context.intent.replace('_edit', '');
+    pendingFileContext = { filePath, fileType, timestamp: Date.now() };
+    console.log(`📝 [Command] Set pending file context: ${filePath} (${fileType})`);
+  }
+
+  // Clear pending file context only on explicit topic changes
+  const shouldClearContext = ['clear_history', 'system_shutdown', 'system_restart', 'system_sleep', 'system_lock'].includes(context.intent);
+  if (shouldClearContext) {
+    pendingFileContext = null;
+    console.log(`🗑️ [Command] Cleared pending file context`);
+  }
 
   // ── Narrar resultado con Ollama (solo si fue exitoso) ──────────────────────
   if (result.success && NARRATION_ENABLED) {
     try {
-      const narratedMessage = await narrateResult(result);
+      const narratedMessage = await narrateResult(result, text);
       result.message = narratedMessage;
     } catch (error) {
       // Graceful fallback - keep original message
@@ -1443,8 +1843,16 @@ app.post('/api/command', async (req: Request, res: Response) => {
   // Clear in-flight flag before returning
   clearInFlight();
 
+  // Add note about remaining commands if this was a compound command
+  let finalMessage = result.message;
+  if (hasMoreCommands && result.success) {
+    const remainingCommands = commandParts.slice(1).join(', ');
+    finalMessage = `${result.message}\n\n💡 También querías: "${remainingCommands}". ¿Lo hago?`;
+  }
+
   return res.json({
     ...result,
+    message: finalMessage,
     meta: {
       intent: context.intent,
       skill: skill.name,
